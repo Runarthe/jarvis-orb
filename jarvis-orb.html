@@ -249,7 +249,7 @@
     recog.onerror = e=>{ log("stt error", e.error); if(state==="listening") setState("idle"); };
     recog.onend = ()=>{
       targetLevel=0;
-      if(state==="listening") setState(handsFree? "idle":"idle");
+      if(state==="listening") setState("idle");
       if(handsFree && wantListen && state!=="speaking" && state!=="thinking") startListening();
     };
   }
@@ -263,32 +263,112 @@
   // ================= SPEECH SYNTHESIS (TTS) =================
   const synth = window.speechSynthesis;
   let voices=[], chosenVoice=null;
+
   function loadVoices(){
     voices = synth.getVoices();
-    // prefer a natural English voice
-    chosenVoice = voices.find(v=>/en(-|_)?(GB|US)/i.test(v.lang) && /natural|google|siri|aria|jenny|daniel|samantha/i.test(v.name))
-               || voices.find(v=>/^en/i.test(v.lang)) || voices[0] || null;
-    $("#voiceBtn").textContent = "Voice: " + (chosenVoice? chosenVoice.name.slice(0,16):"default");
+    // Prefer British male voices (Daniel, George, Arthur are common GB male voices)
+    chosenVoice =
+      voices.find(v => /en(-|_)?GB/i.test(v.lang) && /daniel|george|arthur|oliver|male/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /google/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang))
+      || voices.find(v => /^en/i.test(v.lang) && /daniel|google uk/i.test(v.name))
+      || voices.find(v => /^en/i.test(v.lang) && /natural|google|aria|jenny/i.test(v.name))
+      || voices.find(v => /^en/i.test(v.lang))
+      || voices[0] || null;
+    $("#voiceBtn").textContent = "Voice: " + (chosenVoice ? chosenVoice.name.slice(0,16) : "default");
   }
   if(synth){ loadVoices(); synth.onvoiceschanged = loadVoices; }
-  function speak(text){
-    if(!synth || !text) { setState("idle"); return; }
+
+  // ---------- Butler acknowledgements ----------
+  const BUTLER_ACKS = [
+    "One moment, sir.",
+    "Allow me to check.",
+    "Looking into it now.",
+    "Right away, sir.",
+    "Consider it done.",
+    "On it, sir.",
+    "Leave it with me.",
+  ];
+
+  const TOOL_LINES = {
+    web_search:   "Searching the web, sir.",
+    web_fetch:    "Fetching that page, sir.",
+    file_fetch:   "Consulting the files, sir.",
+    file_read:    "Consulting the files, sir.",
+    dir_list:     "Perusing the directory, sir.",
+    dir_fetch:    "Perusing the directory, sir.",
+    exec:         "Running the command, sir.",
+    bash:         "Running the command, sir.",
+    browser:      "Opening the browser, sir.",
+    code_review:  "Reviewing the code, sir.",
+  };
+
+  function randomAck(){ return BUTLER_ACKS[Math.floor(Math.random()*BUTLER_ACKS.length)]; }
+  function toolLine(name){
+    const key = (name||"").toLowerCase().replace(/[^a-z_]/g,"_");
+    return TOOL_LINES[key] || "Working on it, sir.";
+  }
+
+  // ---------- TTS queue (sentence-by-sentence streaming) ----------
+  let ttsQueue = [];
+  let ttsPlaying = false;
+  let sentenceBuffer = "";
+  let streamCaption = "";
+
+  // Splits text into complete sentences, returning {sentences, remainder}
+  function extractSentences(text){
+    const sentences = [];
+    // Match runs of text ending in . ! ? (optionally followed by quote/paren), then whitespace
+    const re = /[^.!?]*[.!?][)"']?(?=\s|$)/g;
+    let last = 0, m;
+    while((m = re.exec(text)) !== null){
+      const s = m[0].trim();
+      if(s) sentences.push(s);
+      last = re.lastIndex;
+    }
+    return { sentences, remainder: text.slice(last) };
+  }
+
+  function flushTts(){
     synth.cancel();
+    ttsQueue = [];
+    ttsPlaying = false;
+    targetLevel = 0;
+  }
+
+  function enqueueSpeech(text, isAck){
+    if(!synth || !text.trim()) return;
+    if(isAck){
+      // Acknowledgements pre-empt everything
+      flushTts();
+      ttsQueue = [text.trim()];
+    } else {
+      ttsQueue.push(text.trim());
+    }
+    if(!ttsPlaying) playNextTts();
+  }
+
+  function playNextTts(){
+    if(!ttsQueue.length){
+      ttsPlaying = false; targetLevel = 0;
+      if(handsFree){ setState("idle"); startListening(); } else setState("idle");
+      return;
+    }
+    ttsPlaying = true;
+    const text = ttsQueue.shift();
     const u = new SpeechSynthesisUtterance(text);
     if(chosenVoice) u.voice = chosenVoice;
-    u.rate=1.02; u.pitch=1.0;
-    setState("speaking"); caption.textContent = text;
-    // fake amplitude pulse while speaking (SpeechSynthesis gives no analyser)
-    let pulse=0; const pulseTimer=setInterval(()=>{ pulse+=0.4; targetLevel=0.35+0.35*Math.abs(Math.sin(pulse)); },60);
-    u.onend = ()=>{ clearInterval(pulseTimer); targetLevel=0;
-      if(handsFree){ setState("idle"); startListening(); } else setState("idle"); };
-    u.onerror = ()=>{ clearInterval(pulseTimer); targetLevel=0; setState("idle"); };
+    u.rate = 1.02; u.pitch = 1.0;
+    setState("speaking");
+    caption.textContent = text;
+    let pulse = 0;
+    const pulseTimer = setInterval(()=>{ pulse += 0.4; targetLevel = 0.35 + 0.35*Math.abs(Math.sin(pulse)); }, 60);
+    u.onend  = ()=>{ clearInterval(pulseTimer); playNextTts(); };
+    u.onerror= ()=>{ clearInterval(pulseTimer); playNextTts(); };
     synth.speak(u);
   }
 
   // ================= DEVICE IDENTITY (Ed25519 via Web Crypto) =================
-  // Browser generates a persistent Ed25519 key pair used to sign the gateway
-  // connect.challenge nonce, satisfying the protocol v4 device identity requirement.
   let _devicePrivKey = null, _deviceId = null, _devicePubB64 = null;
 
   function b64url(buf){
@@ -321,7 +401,6 @@
   async function buildDeviceParams(nonce, token){
     const signedAt = Date.now();
     const scopes   = "operator.read,operator.write";
-    // v3 payload: "v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily"
     const payload  = ["v3",_deviceId,"webchat-ui","ui","operator",
                        scopes,String(signedAt),token||"",nonce,"web",""].join("|");
     const sigBuf   = await crypto.subtle.sign("Ed25519", _devicePrivKey,
@@ -330,7 +409,7 @@
   }
 
   // ================= GATEWAY WEBSOCKET =================
-  let ws=null, rpcId=1, ready=false, assemble="", connectReqId=null;
+  let ws=null, rpcId=1, ready=false, connectReqId=null;
 
   async function connect(){
     const url   = $("#wsurl").value.trim();
@@ -352,7 +431,6 @@
 
   function fail(){ setState("error"); connDot.className="dot err"; $("#panel").classList.add("open"); }
 
-  // All outbound RPC frames: {type:"req", id:<string>, method, params}
   function send(obj){
     if(!ws||ws.readyState!==1) return;
     const id = String(rpcId++);
@@ -411,23 +489,39 @@
       return;
     }
 
-    if(!ready) return;   // ignore everything else until connected
+    if(!ready) return;
 
-    // ── Phase 3: chat stream (protocol v4) ──
-    // Events: {type:"event", event:"chat", payload:{state:"delta"|"final"|"aborted"|"error", …}}
+    // ── Tool-call events: speak contextual butler line ──
+    if(m.type==="event" && (m.event==="tool.start" || m.event==="tool.use" || m.event==="tool.call")){
+      const name = m.payload?.name || m.payload?.tool || "";
+      enqueueSpeech(toolLine(name));
+      return;
+    }
+
+    // ── Chat stream (protocol v4) ──
     if(m.type==="event" && m.event==="chat"){
       const p = m.payload; if(!p) return;
+
       if(p.state==="delta"){
-        if(p.replace){ assemble = p.deltaText||""; }
-        else          { assemble += p.deltaText||""; }
-        caption.textContent = assemble;
-        setState("thinking");
+        const chunk = p.deltaText || "";
+        if(p.replace){ sentenceBuffer = chunk; streamCaption = chunk; }
+        else          { sentenceBuffer += chunk; streamCaption += chunk; }
+        caption.textContent = streamCaption;
+        if(state!=="speaking") setState("thinking");
+
+        // Speak complete sentences as they arrive
+        const { sentences, remainder } = extractSentences(sentenceBuffer);
+        if(sentences.length){
+          sentences.forEach(s => enqueueSpeech(s));
+          sentenceBuffer = remainder;
+        }
       } else if(p.state==="final"){
-        const reply = assemble.trim();
-        assemble = "";
-        if(reply){ speak(reply); } else setState("idle");
+        // Flush any incomplete sentence remaining in the buffer
+        if(sentenceBuffer.trim()) enqueueSpeech(sentenceBuffer.trim());
+        sentenceBuffer = ""; streamCaption = "";
       } else if(p.state==="aborted" || p.state==="error"){
-        assemble = "";
+        flushTts();
+        sentenceBuffer = ""; streamCaption = "";
         if(p.errorMessage) caption.textContent = p.errorMessage;
         setState("idle");
       }
@@ -436,7 +530,10 @@
 
   function sendToJarvis(text){
     if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected — open ⚙)"; return; }
-    setState("thinking"); assemble="";
+    // Speak butler acknowledgement immediately, pre-empting any prior speech
+    enqueueSpeech(randomAck(), true);
+    setState("thinking");
+    sentenceBuffer = ""; streamCaption = "";
     send({method:"chat.send", params:{
       sessionKey: $("#session").value.trim()||"agent:main:main",
       message: text,
@@ -449,17 +546,22 @@
     if($("#panel").classList.contains("open")) return;
     hint.style.opacity="0";
     if(state==="listening"){ stopListening(); setState("idle"); return; }
-    if(state==="speaking"){ synth.cancel(); setState("idle"); return; }
+    if(state==="speaking"){ flushTts(); setState("idle"); return; }
     await startListening();
   });
   addEventListener("keydown", e=>{
     if(e.code==="Space"){ e.preventDefault(); $("#stage").click(); }
-    if(e.code==="Escape"){ stopListening(); synth&&synth.cancel(); setState("idle"); }
+    if(e.code==="Escape"){ stopListening(); flushTts(); setState("idle"); }
   });
   $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
   $("#connectBtn").onclick = ()=> connect().catch(e=>{ log("connect error:",e.message); fail(); });
   $("#toggleLog").onclick = e=>{ logEl.classList.toggle("show"); e.target.textContent = logEl.classList.contains("show")?"Hide log":"Show log"; };
-  $("#voiceBtn").onclick = ()=>{ if(!voices.length) return; const i=voices.indexOf(chosenVoice); chosenVoice=voices[(i+1)%voices.length]; $("#voiceBtn").textContent="Voice: "+chosenVoice.name.slice(0,16); };
+  $("#voiceBtn").onclick = ()=>{
+    if(!voices.length) return;
+    const i = voices.indexOf(chosenVoice);
+    chosenVoice = voices[(i+1)%voices.length];
+    $("#voiceBtn").textContent = "Voice: "+chosenVoice.name.slice(0,16);
+  };
   $("#hands").onclick = ()=>{ handsFree=!handsFree; $("#hands").textContent="Hands-free: "+(handsFree?"on":"off"); if(handsFree) startListening(); else stopListening(); };
   $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value="";
     _devicePrivKey=null; _deviceId=null; _devicePubB64=null; log("cleared saved token + device identity"); };
