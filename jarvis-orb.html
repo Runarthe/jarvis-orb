@@ -322,7 +322,7 @@
     const signedAt = Date.now();
     const scopes   = "operator.read,operator.write";
     // v3 payload: "v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily"
-    const payload  = ["v3",_deviceId,"jarvis-orb","operator","operator",
+    const payload  = ["v3",_deviceId,"webchat-ui","ui","operator",
                        scopes,String(signedAt),token||"",nonce,"web",""].join("|");
     const sigBuf   = await crypto.subtle.sign("Ed25519", _devicePrivKey,
                        new TextEncoder().encode(payload));
@@ -371,7 +371,7 @@
       type:"req", id, method:"connect",
       params:{
         minProtocol:3, maxProtocol:4,
-        client:{ id:"jarvis-orb", version:"1.0.0", platform:"web", mode:"operator" },
+        client:{ id:"webchat-ui", version:"1.0.0", platform:"web", mode:"ui" },
         role:"operator", scopes:["operator.read","operator.write"],
         caps:[], auth:{token},
         locale: navigator.language||"en-US",
