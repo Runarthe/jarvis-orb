@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jarvis Orb</title>
+<style>
+  :root{
+    --bg:#05070d; --fg:#cfe8ff; --muted:#5b6b86; --panel:rgba(12,18,30,.72);
+    --edge:rgba(90,140,220,.18);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:radial-gradient(1200px 800px at 50% 40%, #0a1120 0%, var(--bg) 70%);color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  #stage{position:fixed;inset:0;display:grid;place-items:center}
+  canvas{display:block}
+  .hint{position:fixed;left:0;right:0;bottom:26px;text-align:center;color:var(--muted);
+    letter-spacing:.3px;pointer-events:none;transition:opacity .4s}
+  #status{position:fixed;top:22px;left:0;right:0;text-align:center;color:var(--muted);letter-spacing:2px;
+    text-transform:uppercase;font-size:12px}
+  #caption{position:fixed;left:50%;transform:translateX(-50%);bottom:70px;max-width:min(760px,86vw);
+    text-align:center;color:var(--fg);opacity:.92;font-size:16px;min-height:1.5em;text-shadow:0 1px 20px rgba(30,90,180,.35)}
+  /* config + log */
+  .gear{position:fixed;top:16px;right:18px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+    cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none}
+  .gear:hover{color:var(--fg)}
+  #panel{position:fixed;top:60px;right:18px;width:340px;max-width:92vw;background:var(--panel);backdrop-filter:blur(10px);
+    border:1px solid var(--edge);border-radius:14px;padding:16px;display:none;z-index:5}
+  #panel.open{display:block}
+  #panel h3{margin:.1rem 0 .6rem;font-size:13px;color:var(--fg);letter-spacing:.3px}
+  #panel label{display:block;font-size:11px;color:var(--muted);margin:.6rem 0 .2rem;text-transform:uppercase;letter-spacing:.5px}
+  #panel input{width:100%;background:#0a1220;border:1px solid var(--edge);color:var(--fg);border-radius:8px;padding:8px 10px;font:inherit}
+  #panel .row{display:flex;gap:8px;margin-top:12px}
+  button{background:#12213b;border:1px solid var(--edge);color:var(--fg);border-radius:8px;padding:9px 12px;
+    cursor:pointer;font:inherit}
+  button:hover{background:#18294a}
+  button.primary{background:#1f4bb8;border-color:#2f66e0}
+  button.primary:hover{background:#2a5ad0}
+  #log{margin-top:12px;max-height:180px;overflow:auto;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;color:#7f93b5;
+    background:#070c16;border:1px solid var(--edge);border-radius:8px;padding:8px;white-space:pre-wrap;display:none}
+  #log.show{display:block}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b4a63;margin-right:8px;vertical-align:middle}
+  .dot.on{background:#39d98a;box-shadow:0 0 10px #39d98a}
+  .dot.err{background:#ff5d6c;box-shadow:0 0 10px #ff5d6c}
+  a.small{color:var(--muted);font-size:11px;text-decoration:none}
+</style>
+</head>
+<body>
+  <div id="status"><span class="dot" id="conn"></span><span id="statustext">click the orb to talk</span></div>
+  <div id="stage"><canvas id="orb"></canvas></div>
+  <div id="caption"></div>
+  <div class="hint" id="hint">Click the orb (or press Space) to talk &nbsp;·&nbsp; Esc to stop</div>
+
+  <div class="gear" id="gear" title="Settings">⚙</div>
+  <div id="panel">
+    <h3>Jarvis connection</h3>
+    <label>Gateway WebSocket URL</label>
+    <input id="wsurl" placeholder="ws://127.0.0.1:18789" />
+    <label>Gateway token</label>
+    <input id="token" type="password" placeholder="paste your gateway token" />
+    <label>Session key</label>
+    <input id="session" placeholder="agent:main:main" />
+    <div class="row">
+      <button class="primary" id="connectBtn">Connect</button>
+      <button id="hands">Hands-free: off</button>
+    </div>
+    <div class="row">
+      <button id="toggleLog">Show log</button>
+      <button id="voiceBtn">Voice: default</button>
+    </div>
+    <div id="log"></div>
+    <div style="margin-top:10px"><a class="small" href="#" id="clearSaved">forget saved token</a></div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const canvas = $("#orb"), ctx = canvas.getContext("2d");
+  const statusText = $("#statustext"), caption = $("#caption"), connDot = $("#conn"), hint = $("#hint");
+  const logEl = $("#log");
+
+  // ---------- persisted settings ----------
+  const store = {
+    get k(){ try{return JSON.parse(localStorage.getItem("jarvisOrb")||"{}")}catch{return{}} },
+    save(o){ localStorage.setItem("jarvisOrb", JSON.stringify({...this.k, ...o})); }
+  };
+  const saved = store.k;
+  $("#wsurl").value  = saved.wsurl  || "ws://127.0.0.1:18789";
+  $("#token").value  = saved.token  || "";
+  $("#session").value= saved.session|| "agent:main:main";
+
+  function log(...a){
+    const line = a.map(x=> typeof x==="string"?x:JSON.stringify(x)).join(" ");
+    logEl.textContent += line + "\n"; logEl.scrollTop = logEl.scrollHeight;
+    console.log("[orb]", ...a);
+  }
+
+  // ---------- state ----------
+  let state = "idle";           // idle|connecting|listening|thinking|speaking|error
+  let level = 0;                // 0..1 audio reactivity
+  let targetLevel = 0;
+  const setState = s => { state = s; paintStatus(); };
+  function paintStatus(){
+    const map = {idle:"click the orb to talk", connecting:"connecting…", listening:"listening…",
+      thinking:"thinking…", speaking:"speaking…", error:"connection error — open ⚙"};
+    statusText.textContent = map[state] || state;
+  }
+
+  // ================= ORB RENDER =================
+  let W,H,DPR;
+  function resize(){
+    DPR = Math.min(2, window.devicePixelRatio||1);
+    W = canvas.width  = Math.floor(innerWidth*DPR);
+    H = canvas.height = Math.floor(innerHeight*DPR);
+    canvas.style.width = innerWidth+"px"; canvas.style.height = innerHeight+"px";
+  }
+  addEventListener("resize", resize); resize();
+
+  const palette = {
+    idle:      ["#1b3b6f","#2e6bd6","#7fd0ff"],
+    connecting:["#2a2f55","#5a5ad0","#a9b6ff"],
+    listening: ["#0e4d6b","#19a0e6","#79f0ff"],
+    thinking:  ["#3a1d63","#7b3ff0","#c9a3ff"],
+    speaking:  ["#5b3b00","#e0a020","#ffe7a0"],
+    error:     ["#5a1620","#c02a3a","#ff8a95"]
+  };
+
+  let t=0;
+  function frame(){
+    t += 0.016;
+    level += (targetLevel - level)*0.12;         // smooth
+    // idle breathing
+    const breathe = 0.5 + 0.5*Math.sin(t*1.6);
+    const react = state==="listening"||state==="speaking" ? level : 0;
+    const energy = Math.min(1, (state==="thinking"?0.55:0.28) + react*0.9 + breathe*0.12);
+
+    ctx.clearRect(0,0,W,H);
+    const cx=W/2, cy=H/2;
+    const base = Math.min(W,H)*0.17;
+    const R = base*(1 + energy*0.28);
+    const cols = palette[state]||palette.idle;
+
+    // outer glow
+    const glow = ctx.createRadialGradient(cx,cy,R*0.2, cx,cy,R*3.4);
+    glow.addColorStop(0, hexA(cols[1], 0.28+energy*0.25));
+    glow.addColorStop(0.5, hexA(cols[0], 0.10));
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle=glow; ctx.fillRect(0,0,W,H);
+
+    // reactive ring of bars
+    const bars = 96;
+    ctx.save(); ctx.translate(cx,cy);
+    for(let i=0;i<bars;i++){
+      const a = (i/bars)*Math.PI*2;
+      const n = 0.5+0.5*Math.sin(t*3 + i*0.5) ;
+      const amp = (0.10 + react*0.9)* (0.4+0.6*n);
+      const r0 = R*1.12;
+      const r1 = R*(1.12 + amp*0.6);
+      ctx.strokeStyle = hexA(cols[2], 0.10+react*0.5);
+      ctx.lineWidth = Math.max(1, DPR*1.4);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*r0, Math.sin(a)*r0);
+      ctx.lineTo(Math.cos(a)*r1, Math.sin(a)*r1);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // core sphere with layered gradient
+    const g = ctx.createRadialGradient(cx-R*0.35, cy-R*0.4, R*0.15, cx, cy, R*1.15);
+    g.addColorStop(0, hexA("#ffffff", 0.9));
+    g.addColorStop(0.18, hexA(cols[2], 0.95));
+    g.addColorStop(0.55, hexA(cols[1], 0.98));
+    g.addColorStop(1, hexA(cols[0], 1));
+    ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+
+    // swirling inner filaments
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.globalCompositeOperation="screen";
+    for(let k=0;k<3;k++){
+      ctx.rotate(t*(0.2+0.1*k)*(k%2?-1:1));
+      ctx.beginPath();
+      for(let i=0;i<=60;i++){
+        const a=(i/60)*Math.PI*2;
+        const wob = Math.sin(a*3 + t*2 + k)*R*0.06*(0.6+energy);
+        const rr = R*(0.62+0.12*k) + wob;
+        const x=Math.cos(a)*rr, y=Math.sin(a)*rr*0.82;
+        i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle=hexA(cols[2], 0.12+energy*0.14);
+      ctx.lineWidth=DPR*1.2; ctx.stroke();
+    }
+    ctx.restore();
+
+    // highlight
+    ctx.beginPath();
+    ctx.arc(cx-R*0.32, cy-R*0.36, R*0.28, 0, Math.PI*2);
+    ctx.fillStyle = hexA("#ffffff", 0.18); ctx.fill();
+
+    requestAnimationFrame(frame);
+  }
+  function hexA(hex,a){
+    const c = hex.replace("#","");
+    const n = parseInt(c.length===3? c.split("").map(x=>x+x).join(""):c,16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+  }
+  requestAnimationFrame(frame);
+
+  // ================= MIC LEVEL (listening reactivity) =================
+  let audioCtx, analyser, micData, micStream;
+  async function ensureMicMeter(){
+    if(analyser) return;
+    try{
+      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize=512;
+      micData = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      meterLoop();
+    }catch(e){ log("mic error", e.message); }
+  }
+  function meterLoop(){
+    if(!analyser) return;
+    analyser.getByteTimeDomainData(micData);
+    let sum=0; for(let i=0;i<micData.length;i++){const v=(micData[i]-128)/128; sum+=v*v;}
+    const rms = Math.sqrt(sum/micData.length);
+    if(state==="listening") targetLevel = Math.min(1, rms*4);
+    requestAnimationFrame(meterLoop);
+  }
+
+  // ================= SPEECH RECOGNITION (STT) =================
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recog=null, handsFree=false, wantListen=false;
+  function initRecog(){
+    if(!SR){ statusText.textContent="no speech recognition (use Chrome)"; return; }
+    recog = new SR();
+    recog.lang="en-US"; recog.interimResults=true; recog.continuous=false;
+    recog.onstart = ()=>{ setState("listening"); caption.textContent=""; };
+    recog.onresult = e=>{
+      let interim="", finalTxt="";
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const tr=e.results[i]; if(tr.isFinal) finalTxt+=tr[0].transcript; else interim+=tr[0].transcript;
+      }
+      caption.textContent = (finalTxt||interim);
+      if(finalTxt.trim()){ sendToJarvis(finalTxt.trim()); }
+    };
+    recog.onerror = e=>{ log("stt error", e.error); if(state==="listening") setState("idle"); };
+    recog.onend = ()=>{
+      targetLevel=0;
+      if(state==="listening") setState(handsFree? "idle":"idle");
+      if(handsFree && wantListen && state!=="speaking" && state!=="thinking") startListening();
+    };
+  }
+  async function startListening(){
+    if(!recog) initRecog(); if(!recog) return;
+    await ensureMicMeter();
+    try{ wantListen=true; recog.start(); }catch(e){ /* already started */ }
+  }
+  function stopListening(){ wantListen=false; try{recog&&recog.stop();}catch{} targetLevel=0; }
+
+  // ================= SPEECH SYNTHESIS (TTS) =================
+  const synth = window.speechSynthesis;
+  let voices=[], chosenVoice=null;
+  function loadVoices(){
+    voices = synth.getVoices();
+    // prefer a natural English voice
+    chosenVoice = voices.find(v=>/en(-|_)?(GB|US)/i.test(v.lang) && /natural|google|siri|aria|jenny|daniel|samantha/i.test(v.name))
+               || voices.find(v=>/^en/i.test(v.lang)) || voices[0] || null;
+    $("#voiceBtn").textContent = "Voice: " + (chosenVoice? chosenVoice.name.slice(0,16):"default");
+  }
+  if(synth){ loadVoices(); synth.onvoiceschanged = loadVoices; }
+  function speak(text){
+    if(!synth || !text) { setState("idle"); return; }
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    if(chosenVoice) u.voice = chosenVoice;
+    u.rate=1.02; u.pitch=1.0;
+    setState("speaking"); caption.textContent = text;
+    // fake amplitude pulse while speaking (SpeechSynthesis gives no analyser)
+    let pulse=0; const pulseTimer=setInterval(()=>{ pulse+=0.4; targetLevel=0.35+0.35*Math.abs(Math.sin(pulse)); },60);
+    u.onend = ()=>{ clearInterval(pulseTimer); targetLevel=0;
+      if(handsFree){ setState("idle"); startListening(); } else setState("idle"); };
+    u.onerror = ()=>{ clearInterval(pulseTimer); targetLevel=0; setState("idle"); };
+    synth.speak(u);
+  }
+
+  // ================= GATEWAY WEBSOCKET =================
+  let ws=null, rpcId=1, ready=false, assemble="";
+  function connect(){
+    const url = $("#wsurl").value.trim();
+    const token = $("#token").value.trim();
+    store.save({wsurl:url, token, session:$("#session").value.trim()});
+    if(ws){ try{ws.close()}catch{} ws=null; }
+    setState("connecting"); connDot.className="dot"; log("connecting", url);
+    try{ ws = new WebSocket(url); }catch(e){ log("ws ctor error", e.message); return fail(); }
+    ws.onopen = ()=>{
+      log("ws open → sending connect");
+      send({method:"connect", params:{ auth:{ token }, protocolVersion:1,
+        client:{ name:"jarvis-orb", role:"operator" } }});
+    };
+    ws.onmessage = ev=>{
+      let m; try{ m=JSON.parse(ev.data); }catch{ return log("non-json", ev.data.slice(0,120)); }
+      handle(m);
+    };
+    ws.onerror = ()=>{ log("ws error"); fail(); };
+    ws.onclose = ev=>{ log("ws close", ev.code, ev.reason||""); ready=false; connDot.className="dot"; if(state!=="idle"&&state!=="listening") setState("idle"); };
+  }
+  function fail(){ setState("error"); connDot.className="dot err"; $("#panel").classList.add("open"); }
+  function send(obj){ if(!ws||ws.readyState!==1) return; const id=rpcId++; const p={id, ...obj}; ws.send(JSON.stringify(p)); log("→", p.method||"", JSON.stringify(p.params||{}).slice(0,120)); return id; }
+
+  // Permissive handler: OpenClaw gateway RPC. We log everything and try to
+  // recognize a successful connect + streaming chat text from several shapes.
+  function handle(m){
+    log("←", JSON.stringify(m).slice(0,220));
+    const method = m.method || m.type || "";
+    // connection acknowledged
+    if(!ready){
+      const ok = m.result || method==="connected" || method==="ready" || m.ok===true;
+      if(ok && !m.error){ ready=true; connDot.className="dot on"; setState("idle"); log("CONNECTED ✓"); }
+      if(m.error){ log("connect error", JSON.stringify(m.error)); fail(); }
+    }
+    // chat streaming / final — try common fields
+    if(method==="chat" || method==="chat.event" || method==="chat.delta" || m.event==="chat"){
+      const p = m.params||m.data||m;
+      const delta = p.delta || p.textDelta || (p.chunk && p.chunk.text);
+      const full  = p.text || p.message || (p.assistant && p.assistant.text) || p.content;
+      if(delta){ assemble += delta; caption.textContent = assemble; }
+      const done = p.done || p.final || p.status==="complete" || p.status==="ok" || method==="chat.final";
+      if(done){
+        const reply = (assemble || full || "").trim();
+        assemble="";
+        if(reply){ speak(reply); } else setState("idle");
+      } else if(full && !delta){
+        // non-streaming single payload
+        assemble=""; speak(String(full).trim());
+      }
+    }
+  }
+
+  function sendToJarvis(text){
+    if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected to Jarvis — open ⚙)"; return; }
+    setState("thinking"); assemble="";
+    send({method:"chat.send", params:{ sessionKey:$("#session").value.trim()||"agent:main:main",
+      text, message:text }});
+  }
+
+  // ================= UI WIRING =================
+  $("#stage").addEventListener("click", async ()=>{
+    if($("#panel").classList.contains("open")) return;
+    hint.style.opacity="0";
+    if(state==="listening"){ stopListening(); setState("idle"); return; }
+    if(state==="speaking"){ synth.cancel(); setState("idle"); return; }
+    await startListening();
+  });
+  addEventListener("keydown", e=>{
+    if(e.code==="Space"){ e.preventDefault(); $("#stage").click(); }
+    if(e.code==="Escape"){ stopListening(); synth&&synth.cancel(); setState("idle"); }
+  });
+  $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
+  $("#connectBtn").onclick = ()=> connect();
+  $("#toggleLog").onclick = e=>{ logEl.classList.toggle("show"); e.target.textContent = logEl.classList.contains("show")?"Hide log":"Show log"; };
+  $("#voiceBtn").onclick = ()=>{ if(!voices.length) return; const i=voices.indexOf(chosenVoice); chosenVoice=voices[(i+1)%voices.length]; $("#voiceBtn").textContent="Voice: "+chosenVoice.name.slice(0,16); };
+  $("#hands").onclick = ()=>{ handsFree=!handsFree; $("#hands").textContent="Hands-free: "+(handsFree?"on":"off"); if(handsFree) startListening(); else stopListening(); };
+  $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value=""; log("cleared saved token"); };
+
+  // auto-connect if we have a token saved
+  if(saved.token){ connect(); }
+  paintStatus();
+  log("Jarvis Orb ready. Open ⚙ to connect, then click the orb to talk.");
+})();
+</script>
+</body>
+</html>
