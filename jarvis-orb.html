@@ -100,7 +100,7 @@
   let state = "idle";           // idle|connecting|listening|thinking|speaking|error
   let level = 0;                // 0..1 audio reactivity
   let targetLevel = 0;
-  const setState = s => { state = s; paintStatus(); };
+  const setState = s => { state = s; paintStatus(); updateHum(); };
   function paintStatus(){
     const map = {idle:"click the orb to talk", connecting:"connecting…", listening:"listening…",
       thinking:"thinking…", speaking:"speaking…", error:"connection error — open ⚙"};
@@ -230,6 +230,56 @@
     requestAnimationFrame(meterLoop);
   }
 
+  // ================= AMBIENT HUM (AI-core drone) =================
+  let humCtx = null, humMaster = null;
+
+  function ensureHum(){
+    if(humCtx) return;
+    try{
+      humCtx = new (window.AudioContext||window.webkitAudioContext)();
+
+      // humMaster fades 0↔1; actual levels live in osc gain nodes
+      humMaster = humCtx.createGain();
+      humMaster.gain.value = 0;
+      humMaster.connect(humCtx.destination);
+
+      // Slow LFO (0.07 Hz ≈ 14 s cycle) breathes the amplitude ±15 %
+      const lfoGain = humCtx.createGain();
+      lfoGain.gain.value = 1.0;
+      lfoGain.connect(humMaster);
+      const lfo = humCtx.createOscillator();
+      lfo.frequency.value = 0.07;
+      const lfoAmt = humCtx.createGain();
+      lfoAmt.gain.value = 0.15;
+      lfo.connect(lfoAmt);
+      lfoAmt.connect(lfoGain.gain);
+      lfo.start();
+
+      // 70 Hz fundamental
+      const osc1 = humCtx.createOscillator();
+      osc1.type = "sine"; osc1.frequency.value = 70;
+      const g1 = humCtx.createGain(); g1.gain.value = 0.042;
+      osc1.connect(g1); g1.connect(lfoGain); osc1.start();
+
+      // 140 Hz soft harmonic
+      const osc2 = humCtx.createOscillator();
+      osc2.type = "sine"; osc2.frequency.value = 140;
+      const g2 = humCtx.createGain(); g2.gain.value = 0.013;
+      osc2.connect(g2); g2.connect(lfoGain); osc2.start();
+
+    }catch(e){ log("hum init error", e.message); humCtx = null; }
+  }
+
+  function setHumTarget(active){
+    if(!humCtx || !humMaster) return;
+    if(humCtx.state === "suspended") humCtx.resume();
+    const now = humCtx.currentTime;
+    humMaster.gain.cancelScheduledValues(now);
+    humMaster.gain.setTargetAtTime(active ? 1.0 : 0, now, active ? 1.2 : 2.5);
+  }
+
+  function updateHum(){ setHumTarget(state === "speaking"); }
+
   // ================= SPEECH RECOGNITION (STT) =================
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recog=null, handsFree=false, wantListen=false;
@@ -266,14 +316,15 @@
 
   function loadVoices(){
     voices = synth.getVoices();
-    // Priority: Google UK English Male > Daniel/George/Arthur (GB) > any en-GB Google > any en-GB > fallback
+    // Female-first priority: Google UK Female > en-GB female names > en-GB Google > en-GB > US female > fallback
     chosenVoice =
-      voices.find(v => /google uk english male/i.test(v.name))
-      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /daniel|george|arthur|oliver/i.test(v.name))
-      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /google/i.test(v.name))
+      voices.find(v => /google uk english female/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /kate|serena|moira|tessa|female/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /google/i.test(v.name) && !/male/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && !/male/i.test(v.name))
       || voices.find(v => /en(-|_)?GB/i.test(v.lang))
-      || voices.find(v => /^en/i.test(v.lang) && /google uk/i.test(v.name))
-      || voices.find(v => /^en/i.test(v.lang) && /natural|google/i.test(v.name))
+      || voices.find(v => /en(-|_)?US/i.test(v.lang) && /samantha|victoria|karen|veena|zira|female/i.test(v.name))
+      || voices.find(v => /^en/i.test(v.lang) && /natural|google/i.test(v.name) && !/male/i.test(v.name))
       || voices.find(v => /^en/i.test(v.lang))
       || voices[0] || null;
     $("#voiceBtn").textContent = "Voice: " + (chosenVoice ? chosenVoice.name.slice(0,16) : "default");
@@ -359,7 +410,7 @@
     const text = ttsQueue.shift();
     const u = new SpeechSynthesisUtterance(text);
     if(chosenVoice) u.voice = chosenVoice;
-    u.rate = 0.90; u.pitch = 0.78;
+    u.rate = 0.92; u.pitch = 0.70;
     setState("speaking");
     caption.textContent = text;
     let pulse = 0;
@@ -544,6 +595,7 @@
 
   // ================= UI WIRING =================
   $("#stage").addEventListener("click", async ()=>{
+    ensureHum();
     if($("#panel").classList.contains("open")) return;
     hint.style.opacity="0";
     if(state==="listening"){ stopListening(); setState("idle"); return; }
@@ -551,7 +603,7 @@
     await startListening();
   });
   addEventListener("keydown", e=>{
-    if(e.code==="Space"){ e.preventDefault(); $("#stage").click(); }
+    if(e.code==="Space"){ ensureHum(); e.preventDefault(); $("#stage").click(); }
     if(e.code==="Escape"){ stopListening(); flushTts(); setState("idle"); }
   });
   $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
