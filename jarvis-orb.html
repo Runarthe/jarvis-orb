@@ -16,14 +16,26 @@
   canvas{display:block}
   .hint{position:fixed;left:0;right:0;bottom:26px;text-align:center;color:var(--muted);
     letter-spacing:.3px;pointer-events:none;transition:opacity .4s}
-  #status{position:fixed;top:22px;left:0;right:0;text-align:center;color:var(--muted);letter-spacing:2px;
-    text-transform:uppercase;font-size:12px}
+  #status{position:fixed;top:22px;left:0;right:0;text-align:center;letter-spacing:2px;
+    text-transform:uppercase;font-size:12px;color:var(--muted);transition:color .3s}
+  /* state-coloured status text */
+  #status[data-state="listening"]{color:#19d0e0}
+  #status[data-state="thinking"] {color:#a970ff}
+  #status[data-state="speaking"] {color:#e0a020}
+  #status[data-state="error"]    {color:#ff5d6c}
+
   #caption{position:fixed;left:50%;transform:translateX(-50%);bottom:70px;max-width:min(760px,86vw);
     text-align:center;color:var(--fg);opacity:.92;font-size:16px;min-height:1.5em;text-shadow:0 1px 20px rgba(30,90,180,.35)}
   /* config + log */
   .gear{position:fixed;top:16px;right:18px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
     cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none}
   .gear:hover{color:var(--fg)}
+  /* mute/stop floating button */
+  #muteBtn{position:fixed;top:16px;right:62px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+    cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none;
+    font-size:18px;line-height:1;transition:color .2s,background .2s;display:none}
+  #muteBtn.active{display:grid;color:#e0a020;border-color:rgba(224,160,32,.4)}
+  #muteBtn:hover{color:var(--fg)}
   #panel{position:fixed;top:60px;right:18px;width:340px;max-width:92vw;background:var(--panel);backdrop-filter:blur(10px);
     border:1px solid var(--edge);border-radius:14px;padding:16px;display:none;z-index:5}
   #panel.open{display:block}
@@ -46,11 +58,12 @@
 </style>
 </head>
 <body>
-  <div id="status"><span class="dot" id="conn"></span><span id="statustext">click the orb to talk</span></div>
+  <div id="status" data-state="idle"><span class="dot" id="conn"></span><span id="statustext">click the orb to talk</span></div>
   <div id="stage"><canvas id="orb"></canvas></div>
   <div id="caption"></div>
   <div class="hint" id="hint">Click the orb (or press Space) to talk &nbsp;·&nbsp; Esc to stop</div>
 
+  <div id="muteBtn" title="Stop speaking">■</div>
   <div class="gear" id="gear" title="Settings">⚙</div>
   <div id="panel">
     <h3>Jarvis connection</h3>
@@ -79,6 +92,7 @@
   const canvas = $("#orb"), ctx = canvas.getContext("2d");
   const statusText = $("#statustext"), caption = $("#caption"), connDot = $("#conn"), hint = $("#hint");
   const logEl = $("#log");
+  const muteBtn = $("#muteBtn");
 
   // ---------- persisted settings ----------
   const store = {
@@ -97,10 +111,17 @@
   }
 
   // ---------- state ----------
-  let state = "idle";           // idle|connecting|listening|thinking|speaking|error
-  let level = 0;                // 0..1 audio reactivity
+  let state = "idle";
+  let level = 0;
   let targetLevel = 0;
-  const setState = s => { state = s; paintStatus(); updateHum(); };
+  const setState = s => {
+    state = s;
+    document.getElementById("status").dataset.state = s;
+    paintStatus();
+    updateHum();
+    // show mute button while speaking
+    muteBtn.classList.toggle("active", s === "speaking");
+  };
   function paintStatus(){
     const map = {idle:"click the orb to talk", connecting:"connecting…", listening:"listening…",
       thinking:"thinking…", speaking:"speaking…", error:"connection error — open ⚙"};
@@ -129,8 +150,7 @@
   let t=0;
   function frame(){
     t += 0.016;
-    level += (targetLevel - level)*0.12;         // smooth
-    // idle breathing
+    level += (targetLevel - level)*0.12;
     const breathe = 0.5 + 0.5*Math.sin(t*1.6);
     const react = state==="listening"||state==="speaking" ? level : 0;
     const energy = Math.min(1, (state==="thinking"?0.55:0.28) + react*0.9 + breathe*0.12);
@@ -141,19 +161,17 @@
     const R = base*(1 + energy*0.28);
     const cols = palette[state]||palette.idle;
 
-    // outer glow
     const glow = ctx.createRadialGradient(cx,cy,R*0.2, cx,cy,R*3.4);
     glow.addColorStop(0, hexA(cols[1], 0.28+energy*0.25));
     glow.addColorStop(0.5, hexA(cols[0], 0.10));
     glow.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle=glow; ctx.fillRect(0,0,W,H);
 
-    // reactive ring of bars
     const bars = 96;
     ctx.save(); ctx.translate(cx,cy);
     for(let i=0;i<bars;i++){
       const a = (i/bars)*Math.PI*2;
-      const n = 0.5+0.5*Math.sin(t*3 + i*0.5) ;
+      const n = 0.5+0.5*Math.sin(t*3 + i*0.5);
       const amp = (0.10 + react*0.9)* (0.4+0.6*n);
       const r0 = R*1.12;
       const r1 = R*(1.12 + amp*0.6);
@@ -166,7 +184,6 @@
     }
     ctx.restore();
 
-    // core sphere with layered gradient
     const g = ctx.createRadialGradient(cx-R*0.35, cy-R*0.4, R*0.15, cx, cy, R*1.15);
     g.addColorStop(0, hexA("#ffffff", 0.9));
     g.addColorStop(0.18, hexA(cols[2], 0.95));
@@ -174,7 +191,6 @@
     g.addColorStop(1, hexA(cols[0], 1));
     ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
 
-    // swirling inner filaments
     ctx.save(); ctx.translate(cx,cy);
     ctx.globalCompositeOperation="screen";
     for(let k=0;k<3;k++){
@@ -193,7 +209,6 @@
     }
     ctx.restore();
 
-    // highlight
     ctx.beginPath();
     ctx.arc(cx-R*0.32, cy-R*0.36, R*0.28, 0, Math.PI*2);
     ctx.fillStyle = hexA("#ffffff", 0.18); ctx.fill();
@@ -207,7 +222,7 @@
   }
   requestAnimationFrame(frame);
 
-  // ================= MIC LEVEL (listening reactivity) =================
+  // ================= MIC LEVEL + VAD =================
   let audioCtx, analyser, micData, micStream;
   async function ensureMicMeter(){
     if(analyser) return;
@@ -227,23 +242,24 @@
     let sum=0; for(let i=0;i<micData.length;i++){const v=(micData[i]-128)/128; sum+=v*v;}
     const rms = Math.sqrt(sum/micData.length);
     if(state==="listening") targetLevel = Math.min(1, rms*4);
+    // VAD barge-in: in hands-free mode, voice above threshold interrupts playback
+    if(state==="speaking" && handsFree && rms > 0.07){
+      interruptAndListen();
+    }
     requestAnimationFrame(meterLoop);
   }
 
-  // ================= AMBIENT HUM (AI-core drone) =================
+  // ================= AMBIENT HUM =================
   let humCtx = null, humMaster = null;
 
   function ensureHum(){
     if(humCtx) return;
     try{
       humCtx = new (window.AudioContext||window.webkitAudioContext)();
-
-      // humMaster fades 0↔1; actual levels live in osc gain nodes
       humMaster = humCtx.createGain();
       humMaster.gain.value = 0;
       humMaster.connect(humCtx.destination);
 
-      // Slow LFO (0.07 Hz ≈ 14 s cycle) breathes the amplitude ±15 %
       const lfoGain = humCtx.createGain();
       lfoGain.gain.value = 1.0;
       lfoGain.connect(humMaster);
@@ -255,13 +271,11 @@
       lfoAmt.connect(lfoGain.gain);
       lfo.start();
 
-      // 70 Hz fundamental
       const osc1 = humCtx.createOscillator();
       osc1.type = "sine"; osc1.frequency.value = 70;
       const g1 = humCtx.createGain(); g1.gain.value = 0.042;
       osc1.connect(g1); g1.connect(lfoGain); osc1.start();
 
-      // 140 Hz soft harmonic
       const osc2 = humCtx.createOscillator();
       osc2.type = "sine"; osc2.frequency.value = 140;
       const g2 = humCtx.createGain(); g2.gain.value = 0.013;
@@ -310,13 +324,57 @@
   }
   function stopListening(){ wantListen=false; try{recog&&recog.stop();}catch{} targetLevel=0; }
 
+  // Interrupt TTS and start listening (barge-in / click-while-speaking)
+  function interruptAndListen(){
+    flushTts();
+    startListening();
+  }
+
+  // ================= TTS TEXT CLEANING =================
+
+  function cleanForTts(text){
+    // Remove fenced code blocks entirely
+    text = text.replace(/```[\s\S]*?```/g, " ");
+    // Remove inline code
+    text = text.replace(/`[^`\n]+`/g, " ");
+    // Remove URLs
+    text = text.replace(/https?:\/\/\S+/g, " ");
+    // Remove markdown link syntax, keep label
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+    // Remove image syntax
+    text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, " ");
+    // Remove markdown headers
+    text = text.replace(/^#{1,6}\s+/gm, "");
+    // Remove bold/italic
+    text = text.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1");
+    text = text.replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
+    // Remove blockquote markers
+    text = text.replace(/^>\s*/gm, "");
+    // Remove bullet/numbered list markers
+    text = text.replace(/^\s*[-*+]\s+/gm, "");
+    text = text.replace(/^\s*\d+\.\s+/gm, "");
+    // Remove horizontal rules
+    text = text.replace(/^[-_*]{3,}\s*$/gm, "");
+    // Collapse extra whitespace
+    return text.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // Returns true if the raw reply should be summarised rather than read in full
+  function shouldSummarise(rawText){
+    if(/```[\s\S]*?```/.test(rawText)) return true;
+    if(/`[^`\n]+`/.test(rawText)) return true;
+    const paras = rawText.split(/\n\n+/).filter(p => p.trim().length > 0);
+    if(paras.length >= 2) return true;
+    if(rawText.length > 350) return true;
+    return false;
+  }
+
   // ================= SPEECH SYNTHESIS (TTS) =================
   const synth = window.speechSynthesis;
   let voices=[], chosenVoice=null;
 
   function loadVoices(){
     voices = synth.getVoices();
-    // Female-first priority: Google UK Female > en-GB female names > en-GB Google > en-GB > US female > fallback
     chosenVoice =
       voices.find(v => /google uk english female/i.test(v.name))
       || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /kate|serena|moira|tessa|female/i.test(v.name))
@@ -361,16 +419,33 @@
     return TOOL_LINES[key] || "Working on it, sir.";
   }
 
+  // ---------- Deferred acknowledgement (skip if reply starts within 1 s) ----------
+  let ackTimer = null;
+  let ackPending = false;
+
+  function schedulePendingAck(text){
+    cancelPendingAck();
+    ackPending = true;
+    ackTimer = setTimeout(()=>{
+      if(ackPending){ enqueueSpeech(text, true); ackPending = false; }
+    }, 1000);
+  }
+
+  function cancelPendingAck(){
+    if(ackTimer){ clearTimeout(ackTimer); ackTimer = null; }
+    ackPending = false;
+  }
+
   // ---------- TTS queue (sentence-by-sentence streaming) ----------
   let ttsQueue = [];
   let ttsPlaying = false;
   let sentenceBuffer = "";
   let streamCaption = "";
+  let fullRawText = "";      // accumulates raw markdown for shouldSummarise check
+  let summarySpoken = false; // prevent repeating "details on screen"
 
-  // Splits text into complete sentences, returning {sentences, remainder}
   function extractSentences(text){
     const sentences = [];
-    // Match runs of text ending in . ! ? (optionally followed by quote/paren), then whitespace
     const re = /[^.!?]*[.!?][)"']?(?=\s|$)/g;
     let last = 0, m;
     while((m = re.exec(text)) !== null){
@@ -391,7 +466,6 @@
   function enqueueSpeech(text, isAck){
     if(!synth || !text.trim()) return;
     if(isAck){
-      // Acknowledgements pre-empt everything
       flushTts();
       ttsQueue = [text.trim()];
     } else {
@@ -516,7 +590,6 @@
   async function handle(m){
     log("←", JSON.stringify(m).slice(0,220));
 
-    // ── Phase 1: gateway sends challenge before accepting connect ──
     if(m.type==="event" && m.event==="connect.challenge"){
       const nonce = m.payload?.nonce;
       if(!nonce){ log("challenge: missing nonce"); return fail(); }
@@ -524,7 +597,6 @@
       return;
     }
 
-    // ── Phase 2: connect response (hello-ok or error) ──
     if(m.type==="res" && m.id===connectReqId){
       connectReqId = null;
       if(m.ok && m.payload?.type==="hello-ok"){
@@ -543,37 +615,63 @@
 
     if(!ready) return;
 
-    // ── Tool-call events: speak contextual butler line ──
+    // Tool-call events
     if(m.type==="event" && (m.event==="tool.start" || m.event==="tool.use" || m.event==="tool.call")){
       const name = m.payload?.name || m.payload?.tool || "";
       enqueueSpeech(toolLine(name));
       return;
     }
 
-    // ── Chat stream (protocol v4) ──
+    // Chat stream (protocol v4)
     if(m.type==="event" && m.event==="chat"){
       const p = m.payload; if(!p) return;
 
       if(p.state==="delta"){
+        // Cancel ack if first text chunk arrives quickly (reply was fast)
+        cancelPendingAck();
+
         const chunk = p.deltaText || "";
-        if(p.replace){ sentenceBuffer = chunk; streamCaption = chunk; }
-        else          { sentenceBuffer += chunk; streamCaption += chunk; }
+        if(p.replace){ sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false; }
+        sentenceBuffer += chunk;
+        streamCaption  += chunk;
+        fullRawText    += chunk;
         caption.textContent = streamCaption;
         if(state!=="speaking") setState("thinking");
 
-        // Speak complete sentences as they arrive
-        const { sentences, remainder } = extractSentences(sentenceBuffer);
-        if(sentences.length){
-          sentences.forEach(s => enqueueSpeech(s));
-          sentenceBuffer = remainder;
+        // If we've crossed the summarise threshold mid-stream, flush and note it
+        if(!summarySpoken && shouldSummarise(fullRawText)){
+          flushTts();
+          // defer speaking the summary until final, to avoid premature cut-off
+        } else if(!summarySpoken) {
+          // Speak complete sentences as they arrive (cleaned of markdown)
+          const cleaned = cleanForTts(sentenceBuffer);
+          const { sentences, remainder } = extractSentences(cleaned);
+          if(sentences.length){
+            sentences.forEach(s => enqueueSpeech(s));
+            // advance raw buffer by roughly the same length (best-effort)
+            sentenceBuffer = sentenceBuffer.slice(Math.max(0, sentenceBuffer.length - remainder.length));
+          }
         }
+
       } else if(p.state==="final"){
-        // Flush any incomplete sentence remaining in the buffer
-        if(sentenceBuffer.trim()) enqueueSpeech(sentenceBuffer.trim());
-        sentenceBuffer = ""; streamCaption = "";
+        if(shouldSummarise(fullRawText)){
+          // Flush any partial TTS and speak a brief summary instead
+          flushTts();
+          if(!summarySpoken){
+            summarySpoken = true;
+            enqueueSpeech("The details are on screen, sir.");
+          }
+        } else {
+          // Flush any incomplete sentence remaining in the buffer
+          const remaining = cleanForTts(sentenceBuffer).trim();
+          if(remaining) enqueueSpeech(remaining);
+        }
+        sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
+
       } else if(p.state==="aborted" || p.state==="error"){
         flushTts();
-        sentenceBuffer = ""; streamCaption = "";
+        cancelPendingAck();
+        sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
         if(p.errorMessage) caption.textContent = p.errorMessage;
         setState("idle");
       }
@@ -582,10 +680,10 @@
 
   function sendToJarvis(text){
     if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected — open ⚙)"; return; }
-    // Speak butler acknowledgement immediately, pre-empting any prior speech
-    enqueueSpeech(randomAck(), true);
     setState("thinking");
-    sentenceBuffer = ""; streamCaption = "";
+    sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
+    // Schedule ack; it fires in 1 s unless a delta cancels it first
+    schedulePendingAck(randomAck());
     send({method:"chat.send", params:{
       sessionKey: $("#session").value.trim()||"agent:main:main",
       message: text,
@@ -599,12 +697,20 @@
     if($("#panel").classList.contains("open")) return;
     hint.style.opacity="0";
     if(state==="listening"){ stopListening(); setState("idle"); return; }
-    if(state==="speaking"){ flushTts(); setState("idle"); return; }
+    if(state==="speaking"){ interruptAndListen(); return; }
     await startListening();
   });
   addEventListener("keydown", e=>{
-    if(e.code==="Space"){ ensureHum(); e.preventDefault(); $("#stage").click(); }
-    if(e.code==="Escape"){ stopListening(); flushTts(); setState("idle"); }
+    if(e.code==="Space"){
+      ensureHum(); e.preventDefault();
+      if(state==="speaking"){ interruptAndListen(); return; }
+      $("#stage").click();
+    }
+    if(e.code==="Escape"){ stopListening(); flushTts(); cancelPendingAck(); setState("idle"); }
+  });
+  muteBtn.addEventListener("click", e=>{
+    e.stopPropagation();
+    stopListening(); flushTts(); cancelPendingAck(); setState("idle");
   });
   $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
   $("#connectBtn").onclick = ()=> connect().catch(e=>{ log("connect error:",e.message); fail(); });
@@ -619,7 +725,6 @@
   $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value="";
     _devicePrivKey=null; _deviceId=null; _devicePubB64=null; log("cleared saved token + device identity"); };
 
-  // auto-connect if we have a token saved
   if(saved.token){ connect().catch(e=>{ log("auto-connect error:",e.message); fail(); }); }
   paintStatus();
   log("Jarvis Orb ready. Open ⚙ to connect, then click the orb to talk.");
