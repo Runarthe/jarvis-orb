@@ -286,64 +286,162 @@
     synth.speak(u);
   }
 
+  // ================= DEVICE IDENTITY (Ed25519 via Web Crypto) =================
+  // Browser generates a persistent Ed25519 key pair used to sign the gateway
+  // connect.challenge nonce, satisfying the protocol v4 device identity requirement.
+  let _devicePrivKey = null, _deviceId = null, _devicePubB64 = null;
+
+  function b64url(buf){
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  }
+
+  async function ensureDevice(){
+    if(_devicePrivKey) return;
+    const s = store.k;
+    if(s.deviceId && s.devicePubB64 && s.devicePrivJwk){
+      try{
+        _devicePrivKey = await crypto.subtle.importKey(
+          "jwk", s.devicePrivJwk, {name:"Ed25519"}, false, ["sign"]);
+        _deviceId = s.deviceId; _devicePubB64 = s.devicePubB64;
+        log("device identity loaded", _deviceId.slice(0,12)+"…"); return;
+      }catch(e){ log("device key import failed, regenerating:", e.message); }
+    }
+    const kp = await crypto.subtle.generateKey({name:"Ed25519"}, true, ["sign","verify"]);
+    const pubRaw = await crypto.subtle.exportKey("raw", kp.publicKey);
+    const idHash = await crypto.subtle.digest("SHA-256", pubRaw);
+    _deviceId     = Array.from(new Uint8Array(idHash)).map(b=>b.toString(16).padStart(2,"0")).join("");
+    _devicePubB64 = b64url(pubRaw);
+    _devicePrivKey= kp.privateKey;
+    const privJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    store.save({deviceId:_deviceId, devicePubB64:_devicePubB64, devicePrivJwk:privJwk});
+    log("device identity generated", _deviceId.slice(0,12)+"…");
+  }
+
+  async function buildDeviceParams(nonce, token){
+    const signedAt = Date.now();
+    const scopes   = "operator.read,operator.write";
+    // v3 payload: "v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily"
+    const payload  = ["v3",_deviceId,"jarvis-orb","operator","operator",
+                       scopes,String(signedAt),token||"",nonce,"web",""].join("|");
+    const sigBuf   = await crypto.subtle.sign("Ed25519", _devicePrivKey,
+                       new TextEncoder().encode(payload));
+    return {id:_deviceId, publicKey:_devicePubB64, signature:b64url(sigBuf), signedAt, nonce};
+  }
+
   // ================= GATEWAY WEBSOCKET =================
-  let ws=null, rpcId=1, ready=false, assemble="";
-  function connect(){
-    const url = $("#wsurl").value.trim();
+  let ws=null, rpcId=1, ready=false, assemble="", connectReqId=null;
+
+  async function connect(){
+    const url   = $("#wsurl").value.trim();
     const token = $("#token").value.trim();
     store.save({wsurl:url, token, session:$("#session").value.trim()});
     if(ws){ try{ws.close()}catch{} ws=null; }
     setState("connecting"); connDot.className="dot"; log("connecting", url);
+    await ensureDevice();
     try{ ws = new WebSocket(url); }catch(e){ log("ws ctor error", e.message); return fail(); }
-    ws.onopen = ()=>{
-      log("ws open → sending connect");
-      send({method:"connect", params:{ auth:{ token }, protocolVersion:1,
-        client:{ name:"jarvis-orb", role:"operator" } }});
-    };
-    ws.onmessage = ev=>{
-      let m; try{ m=JSON.parse(ev.data); }catch{ return log("non-json", ev.data.slice(0,120)); }
-      handle(m);
+    ws.onopen  = ()=>{ log("ws open → awaiting connect.challenge"); };
+    ws.onmessage = async ev=>{
+      let m; try{ m=JSON.parse(ev.data); }catch{ return log("non-json",ev.data.slice(0,120)); }
+      await handle(m);
     };
     ws.onerror = ()=>{ log("ws error"); fail(); };
-    ws.onclose = ev=>{ log("ws close", ev.code, ev.reason||""); ready=false; connDot.className="dot"; if(state!=="idle"&&state!=="listening") setState("idle"); };
+    ws.onclose = ev=>{ log("ws close",ev.code,ev.reason||""); ready=false; connDot.className="dot";
+      if(state!=="idle"&&state!=="listening") setState("idle"); };
   }
-  function fail(){ setState("error"); connDot.className="dot err"; $("#panel").classList.add("open"); }
-  function send(obj){ if(!ws||ws.readyState!==1) return; const id=rpcId++; const p={id, ...obj}; ws.send(JSON.stringify(p)); log("→", p.method||"", JSON.stringify(p.params||{}).slice(0,120)); return id; }
 
-  // Permissive handler: OpenClaw gateway RPC. We log everything and try to
-  // recognize a successful connect + streaming chat text from several shapes.
-  function handle(m){
+  function fail(){ setState("error"); connDot.className="dot err"; $("#panel").classList.add("open"); }
+
+  // All outbound RPC frames: {type:"req", id:<string>, method, params}
+  function send(obj){
+    if(!ws||ws.readyState!==1) return;
+    const id = String(rpcId++);
+    const p  = {type:"req", id, ...obj};
+    ws.send(JSON.stringify(p));
+    log("→", p.method, JSON.stringify(p.params||{}).slice(0,120));
+    return id;
+  }
+
+  async function sendConnect(nonce){
+    const token  = $("#token").value.trim();
+    const device = await buildDeviceParams(nonce, token);
+    const id     = String(rpcId++);
+    connectReqId = id;
+    const frame  = {
+      type:"req", id, method:"connect",
+      params:{
+        minProtocol:3, maxProtocol:4,
+        client:{ id:"jarvis-orb", version:"1.0.0", platform:"web", mode:"operator" },
+        role:"operator", scopes:["operator.read","operator.write"],
+        caps:[], auth:{token},
+        locale: navigator.language||"en-US",
+        userAgent:"jarvis-orb/1.0.0",
+        device
+      }
+    };
+    ws.send(JSON.stringify(frame));
+    log("→ connect v3-signed nonce="+nonce.slice(0,8)+"…");
+  }
+
+  async function handle(m){
     log("←", JSON.stringify(m).slice(0,220));
-    const method = m.method || m.type || "";
-    // connection acknowledged
-    if(!ready){
-      const ok = m.result || method==="connected" || method==="ready" || m.ok===true;
-      if(ok && !m.error){ ready=true; connDot.className="dot on"; setState("idle"); log("CONNECTED ✓"); }
-      if(m.error){ log("connect error", JSON.stringify(m.error)); fail(); }
+
+    // ── Phase 1: gateway sends challenge before accepting connect ──
+    if(m.type==="event" && m.event==="connect.challenge"){
+      const nonce = m.payload?.nonce;
+      if(!nonce){ log("challenge: missing nonce"); return fail(); }
+      await sendConnect(nonce);
+      return;
     }
-    // chat streaming / final — try common fields
-    if(method==="chat" || method==="chat.event" || method==="chat.delta" || m.event==="chat"){
-      const p = m.params||m.data||m;
-      const delta = p.delta || p.textDelta || (p.chunk && p.chunk.text);
-      const full  = p.text || p.message || (p.assistant && p.assistant.text) || p.content;
-      if(delta){ assemble += delta; caption.textContent = assemble; }
-      const done = p.done || p.final || p.status==="complete" || p.status==="ok" || method==="chat.final";
-      if(done){
-        const reply = (assemble || full || "").trim();
-        assemble="";
+
+    // ── Phase 2: connect response (hello-ok or error) ──
+    if(m.type==="res" && m.id===connectReqId){
+      connectReqId = null;
+      if(m.ok && m.payload?.type==="hello-ok"){
+        ready = true;
+        const dt = m.payload.auth?.deviceToken;
+        if(dt) store.save({deviceToken:dt});
+        connDot.className="dot on"; setState("idle");
+        log("CONNECTED ✓ protocol v"+m.payload.protocol,
+            "scopes:"+(m.payload.auth?.scopes||[]).join(","));
+      } else {
+        log("connect failed:", JSON.stringify(m.error||m));
+        fail();
+      }
+      return;
+    }
+
+    if(!ready) return;   // ignore everything else until connected
+
+    // ── Phase 3: chat stream (protocol v4) ──
+    // Events: {type:"event", event:"chat", payload:{state:"delta"|"final"|"aborted"|"error", …}}
+    if(m.type==="event" && m.event==="chat"){
+      const p = m.payload; if(!p) return;
+      if(p.state==="delta"){
+        if(p.replace){ assemble = p.deltaText||""; }
+        else          { assemble += p.deltaText||""; }
+        caption.textContent = assemble;
+        setState("thinking");
+      } else if(p.state==="final"){
+        const reply = assemble.trim();
+        assemble = "";
         if(reply){ speak(reply); } else setState("idle");
-      } else if(full && !delta){
-        // non-streaming single payload
-        assemble=""; speak(String(full).trim());
+      } else if(p.state==="aborted" || p.state==="error"){
+        assemble = "";
+        if(p.errorMessage) caption.textContent = p.errorMessage;
+        setState("idle");
       }
     }
   }
 
   function sendToJarvis(text){
-    if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected to Jarvis — open ⚙)"; return; }
+    if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected — open ⚙)"; return; }
     setState("thinking"); assemble="";
-    send({method:"chat.send", params:{ sessionKey:$("#session").value.trim()||"agent:main:main",
-      text, message:text }});
+    send({method:"chat.send", params:{
+      sessionKey: $("#session").value.trim()||"agent:main:main",
+      message: text,
+      idempotencyKey: "orb-"+Date.now()+"-"+Math.random().toString(36).slice(2)
+    }});
   }
 
   // ================= UI WIRING =================
@@ -359,14 +457,15 @@
     if(e.code==="Escape"){ stopListening(); synth&&synth.cancel(); setState("idle"); }
   });
   $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
-  $("#connectBtn").onclick = ()=> connect();
+  $("#connectBtn").onclick = ()=> connect().catch(e=>{ log("connect error:",e.message); fail(); });
   $("#toggleLog").onclick = e=>{ logEl.classList.toggle("show"); e.target.textContent = logEl.classList.contains("show")?"Hide log":"Show log"; };
   $("#voiceBtn").onclick = ()=>{ if(!voices.length) return; const i=voices.indexOf(chosenVoice); chosenVoice=voices[(i+1)%voices.length]; $("#voiceBtn").textContent="Voice: "+chosenVoice.name.slice(0,16); };
   $("#hands").onclick = ()=>{ handsFree=!handsFree; $("#hands").textContent="Hands-free: "+(handsFree?"on":"off"); if(handsFree) startListening(); else stopListening(); };
-  $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value=""; log("cleared saved token"); };
+  $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value="";
+    _devicePrivKey=null; _deviceId=null; _devicePubB64=null; log("cleared saved token + device identity"); };
 
   // auto-connect if we have a token saved
-  if(saved.token){ connect(); }
+  if(saved.token){ connect().catch(e=>{ log("auto-connect error:",e.message); fail(); }); }
   paintStatus();
   log("Jarvis Orb ready. Open ⚙ to connect, then click the orb to talk.");
 })();
