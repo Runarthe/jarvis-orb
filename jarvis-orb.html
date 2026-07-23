@@ -6,51 +6,66 @@
 <title>Jarvis Orb</title>
 <style>
   :root{
-    --bg:#05070d; --fg:#cfe8ff; --muted:#5b6b86; --panel:rgba(12,18,30,.72);
-    --edge:rgba(90,140,220,.18);
+    --bg:#060a0f; --fg:#28e0ff; --muted:#1a6070; --panel:rgba(4,12,20,.90);
+    --edge:rgba(40,224,255,.14);
   }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:radial-gradient(1200px 800px at 50% 40%, #0a1120 0%, var(--bg) 70%);color:var(--fg);
-    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  html,body{margin:0;height:100%;background:#060a0f;color:var(--fg);
+    font:12px/1.5 ui-monospace,Menlo,Consolas,"Segoe UI",sans-serif;overflow:hidden}
   #stage{position:fixed;inset:0;display:grid;place-items:center}
   canvas{display:block}
   .hint{position:fixed;left:0;right:0;bottom:26px;text-align:center;color:var(--muted);
-    letter-spacing:.3px;pointer-events:none;transition:opacity .4s}
-  #status{position:fixed;top:22px;left:0;right:0;text-align:center;color:var(--muted);letter-spacing:2px;
-    text-transform:uppercase;font-size:12px}
+    letter-spacing:1.2px;pointer-events:none;transition:opacity .4s;font-size:10px;text-transform:uppercase}
+  #status{position:fixed;top:22px;left:0;right:0;text-align:center;letter-spacing:3px;
+    text-transform:uppercase;font-size:10px;color:var(--muted);transition:color .3s,text-shadow .3s}
+  #status[data-state="listening"]{color:#28e0ff;text-shadow:0 0 14px rgba(40,224,255,.65)}
+  #status[data-state="thinking"] {color:#0ae8d0;text-shadow:0 0 14px rgba(10,232,208,.55)}
+  #status[data-state="speaking"] {color:#9afdff;text-shadow:0 0 14px rgba(154,253,255,.55)}
+  #status[data-state="error"]    {color:#ff3355;text-shadow:0 0 10px rgba(255,51,85,.45)}
   #caption{position:fixed;left:50%;transform:translateX(-50%);bottom:70px;max-width:min(760px,86vw);
-    text-align:center;color:var(--fg);opacity:.92;font-size:16px;min-height:1.5em;text-shadow:0 1px 20px rgba(30,90,180,.35)}
-  /* config + log */
-  .gear{position:fixed;top:16px;right:18px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
-    cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none}
-  .gear:hover{color:var(--fg)}
-  #panel{position:fixed;top:60px;right:18px;width:340px;max-width:92vw;background:var(--panel);backdrop-filter:blur(10px);
-    border:1px solid var(--edge);border-radius:14px;padding:16px;display:none;z-index:5}
+    text-align:center;color:var(--fg);opacity:.88;font-size:14px;min-height:1.5em;
+    letter-spacing:.3px;text-shadow:0 0 22px rgba(40,224,255,.28)}
+  .gear{position:fixed;top:16px;right:18px;width:34px;height:34px;border-radius:4px;display:grid;place-items:center;
+    cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none;font-size:15px}
+  .gear:hover{color:var(--fg);border-color:rgba(40,224,255,.38)}
+  #muteBtn{position:fixed;top:16px;right:62px;width:34px;height:34px;border-radius:4px;display:grid;place-items:center;
+    cursor:pointer;color:var(--muted);background:var(--panel);border:1px solid var(--edge);user-select:none;
+    font-size:18px;line-height:1;transition:color .2s,border-color .2s;display:none}
+  #muteBtn.active{display:grid;color:#28e0ff;border-color:rgba(40,224,255,.42);box-shadow:0 0 10px rgba(40,224,255,.18)}
+  #muteBtn:hover{color:var(--fg)}
+  #panel{position:fixed;top:60px;right:18px;width:340px;max-width:92vw;background:var(--panel);backdrop-filter:blur(14px);
+    border:1px solid var(--edge);border-radius:6px;padding:16px;display:none;z-index:5;
+    box-shadow:0 0 32px rgba(40,224,255,.05),inset 0 1px 0 rgba(40,224,255,.07)}
   #panel.open{display:block}
-  #panel h3{margin:.1rem 0 .6rem;font-size:13px;color:var(--fg);letter-spacing:.3px}
-  #panel label{display:block;font-size:11px;color:var(--muted);margin:.6rem 0 .2rem;text-transform:uppercase;letter-spacing:.5px}
-  #panel input{width:100%;background:#0a1220;border:1px solid var(--edge);color:var(--fg);border-radius:8px;padding:8px 10px;font:inherit}
+  #panel h3{margin:.1rem 0 .6rem;font-size:10px;color:var(--fg);letter-spacing:2.5px;text-transform:uppercase}
+  #panel label{display:block;font-size:9px;color:var(--muted);margin:.6rem 0 .2rem;text-transform:uppercase;letter-spacing:1.2px}
+  #panel input{width:100%;background:rgba(0,20,30,.85);border:1px solid var(--edge);color:var(--fg);
+    border-radius:4px;padding:8px 10px;font:inherit;outline:none}
+  #panel input:focus{border-color:rgba(40,224,255,.5);box-shadow:0 0 8px rgba(40,224,255,.12)}
   #panel .row{display:flex;gap:8px;margin-top:12px}
-  button{background:#12213b;border:1px solid var(--edge);color:var(--fg);border-radius:8px;padding:9px 12px;
-    cursor:pointer;font:inherit}
-  button:hover{background:#18294a}
-  button.primary{background:#1f4bb8;border-color:#2f66e0}
-  button.primary:hover{background:#2a5ad0}
-  #log{margin-top:12px;max-height:180px;overflow:auto;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;color:#7f93b5;
-    background:#070c16;border:1px solid var(--edge);border-radius:8px;padding:8px;white-space:pre-wrap;display:none}
+  button{background:rgba(0,18,28,.85);border:1px solid var(--edge);color:var(--muted);border-radius:4px;
+    padding:9px 12px;cursor:pointer;font:inherit;letter-spacing:.8px;font-size:10px;
+    text-transform:uppercase;transition:color .2s,border-color .2s}
+  button:hover{color:var(--fg);border-color:rgba(40,224,255,.38)}
+  button.primary{background:rgba(40,224,255,.07);border-color:rgba(40,224,255,.38);color:var(--fg)}
+  button.primary:hover{background:rgba(40,224,255,.14);box-shadow:0 0 12px rgba(40,224,255,.14)}
+  #log{margin-top:12px;max-height:180px;overflow:auto;font:10px/1.45 ui-monospace,Menlo,Consolas,monospace;
+    color:#1a6070;background:rgba(0,10,18,.92);border:1px solid var(--edge);border-radius:4px;
+    padding:8px;white-space:pre-wrap;display:none}
   #log.show{display:block}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b4a63;margin-right:8px;vertical-align:middle}
-  .dot.on{background:#39d98a;box-shadow:0 0 10px #39d98a}
-  .dot.err{background:#ff5d6c;box-shadow:0 0 10px #ff5d6c}
-  a.small{color:var(--muted);font-size:11px;text-decoration:none}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#0a1e2a;margin-right:8px;vertical-align:middle}
+  .dot.on{background:#28e0ff;box-shadow:0 0 8px #28e0ff}
+  .dot.err{background:#ff3355;box-shadow:0 0 8px #ff3355}
+  a.small{color:var(--muted);font-size:9px;text-decoration:none;letter-spacing:.8px;text-transform:uppercase}
 </style>
 </head>
 <body>
-  <div id="status"><span class="dot" id="conn"></span><span id="statustext">click the orb to talk</span></div>
+  <div id="status" data-state="idle"><span class="dot" id="conn"></span><span id="statustext">click the orb to talk</span></div>
   <div id="stage"><canvas id="orb"></canvas></div>
   <div id="caption"></div>
   <div class="hint" id="hint">Click the orb (or press Space) to talk &nbsp;·&nbsp; Esc to stop</div>
 
+  <div id="muteBtn" title="Stop speaking">■</div>
   <div class="gear" id="gear" title="Settings">⚙</div>
   <div id="panel">
     <h3>Jarvis connection</h3>
@@ -79,6 +94,7 @@
   const canvas = $("#orb"), ctx = canvas.getContext("2d");
   const statusText = $("#statustext"), caption = $("#caption"), connDot = $("#conn"), hint = $("#hint");
   const logEl = $("#log");
+  const muteBtn = $("#muteBtn");
 
   // ---------- persisted settings ----------
   const store = {
@@ -97,10 +113,17 @@
   }
 
   // ---------- state ----------
-  let state = "idle";           // idle|connecting|listening|thinking|speaking|error
-  let level = 0;                // 0..1 audio reactivity
+  let state = "idle";
+  let level = 0;
   let targetLevel = 0;
-  const setState = s => { state = s; paintStatus(); };
+  const setState = s => {
+    state = s;
+    document.getElementById("status").dataset.state = s;
+    paintStatus();
+    updateHum();
+    // show mute button while speaking
+    muteBtn.classList.toggle("active", s === "speaking");
+  };
   function paintStatus(){
     const map = {idle:"click the orb to talk", connecting:"connecting…", listening:"listening…",
       thinking:"thinking…", speaking:"speaking…", error:"connection error — open ⚙"};
@@ -117,97 +140,201 @@
   }
   addEventListener("resize", resize); resize();
 
-  const palette = {
-    idle:      ["#1b3b6f","#2e6bd6","#7fd0ff"],
-    connecting:["#2a2f55","#5a5ad0","#a9b6ff"],
-    listening: ["#0e4d6b","#19a0e6","#79f0ff"],
-    thinking:  ["#3a1d63","#7b3ff0","#c9a3ff"],
-    speaking:  ["#5b3b00","#e0a020","#ffe7a0"],
-    error:     ["#5a1620","#c02a3a","#ff8a95"]
-  };
+  // ---- J.A.R.V.I.S. HUD palette ----
+  const CYAN   = '#28e0ff';
+  const CYANBR = '#9afeff';
+  const WHITE  = '#e8faff';
+
+  function hexA(hex,a){
+    const c=hex.replace("#","");
+    const n=parseInt(c.length===3?c.split("").map(x=>x+x).join(""):c,16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+  }
+
+  // [radiusFactor, segments, gapRad, baseSpeed, dir, baseAlpha, lineWidth, hasTicks]
+  const RINGS=[
+    {rf:0.42,segs:24,gap:0.13,spd:0.22,dir:1, a:0.60,lw:1.8,ticks:true},
+    {rf:0.62,segs:40,gap:0.09,spd:0.13,dir:-1,a:0.45,lw:1.3,ticks:false},
+    {rf:0.84,segs:56,gap:0.07,spd:0.08,dir:1, a:0.38,lw:1.1,ticks:true},
+    {rf:1.10,segs:72,gap:0.05,spd:0.05,dir:-1,a:0.28,lw:0.9,ticks:false},
+    {rf:1.48,segs:20,gap:0.22,spd:0.03,dir:1, a:0.18,lw:0.7,ticks:false},
+  ];
+  const ringOff=RINGS.map(()=>Math.random()*Math.PI*2);
+  const HUD_NUMS=["0237","4.7T","ARK-3","ONLN","ε=.92","INF-12","SYS","3.2G","Δ+.03","LOCK","8F14","v4.1"];
 
   let t=0;
   function frame(){
-    t += 0.016;
-    level += (targetLevel - level)*0.12;         // smooth
-    // idle breathing
-    const breathe = 0.5 + 0.5*Math.sin(t*1.6);
-    const react = state==="listening"||state==="speaking" ? level : 0;
-    const energy = Math.min(1, (state==="thinking"?0.55:0.28) + react*0.9 + breathe*0.12);
+    t+=0.016;
+    level+=(targetLevel-level)*0.12;
+
+    const sm={idle:1,connecting:1.8,listening:2.8,thinking:4.2,speaking:2.2,error:0.5}[state]||1;
+    const breathe=0.5+0.5*Math.sin(t*1.4);
+    const react=(state==="listening"||state==="speaking")?level:0;
+    const energy=Math.min(1,(state==="thinking"?0.60:0.28)+react*0.85+breathe*0.10);
 
     ctx.clearRect(0,0,W,H);
-    const cx=W/2, cy=H/2;
-    const base = Math.min(W,H)*0.17;
-    const R = base*(1 + energy*0.28);
-    const cols = palette[state]||palette.idle;
+    const cx=W/2,cy=H/2;
+    const base=Math.min(W,H)*0.16;
 
-    // outer glow
-    const glow = ctx.createRadialGradient(cx,cy,R*0.2, cx,cy,R*3.4);
-    glow.addColorStop(0, hexA(cols[1], 0.28+energy*0.25));
-    glow.addColorStop(0.5, hexA(cols[0], 0.10));
-    glow.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle=glow; ctx.fillRect(0,0,W,H);
+    // ambient background glow
+    const bg=ctx.createRadialGradient(cx,cy,0,cx,cy,base*3.2);
+    bg.addColorStop(0,hexA(CYAN,0.05+energy*0.07));
+    bg.addColorStop(0.45,hexA('#002535',0.10));
+    bg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
 
-    // reactive ring of bars
-    const bars = 96;
+    // faint radial gridlines
     ctx.save(); ctx.translate(cx,cy);
-    for(let i=0;i<bars;i++){
-      const a = (i/bars)*Math.PI*2;
-      const n = 0.5+0.5*Math.sin(t*3 + i*0.5) ;
-      const amp = (0.10 + react*0.9)* (0.4+0.6*n);
-      const r0 = R*1.12;
-      const r1 = R*(1.12 + amp*0.6);
-      ctx.strokeStyle = hexA(cols[2], 0.10+react*0.5);
-      ctx.lineWidth = Math.max(1, DPR*1.4);
+    for(let i=0;i<12;i++){
+      const a=(i/12)*Math.PI*2;
+      ctx.strokeStyle=hexA(CYAN,0.033);
+      ctx.lineWidth=DPR*0.5;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a)*r0, Math.sin(a)*r0);
-      ctx.lineTo(Math.cos(a)*r1, Math.sin(a)*r1);
+      ctx.moveTo(Math.cos(a)*base*0.42*DPR, Math.sin(a)*base*0.42*DPR);
+      ctx.lineTo(Math.cos(a)*base*1.62*DPR, Math.sin(a)*base*1.62*DPR);
       ctx.stroke();
     }
     ctx.restore();
 
-    // core sphere with layered gradient
-    const g = ctx.createRadialGradient(cx-R*0.35, cy-R*0.4, R*0.15, cx, cy, R*1.15);
-    g.addColorStop(0, hexA("#ffffff", 0.9));
-    g.addColorStop(0.18, hexA(cols[2], 0.95));
-    g.addColorStop(0.55, hexA(cols[1], 0.98));
-    g.addColorStop(1, hexA(cols[0], 1));
-    ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
-
-    // swirling inner filaments
-    ctx.save(); ctx.translate(cx,cy);
-    ctx.globalCompositeOperation="screen";
-    for(let k=0;k<3;k++){
-      ctx.rotate(t*(0.2+0.1*k)*(k%2?-1:1));
-      ctx.beginPath();
-      for(let i=0;i<=60;i++){
-        const a=(i/60)*Math.PI*2;
-        const wob = Math.sin(a*3 + t*2 + k)*R*0.06*(0.6+energy);
-        const rr = R*(0.62+0.12*k) + wob;
-        const x=Math.cos(a)*rr, y=Math.sin(a)*rr*0.82;
-        i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-      }
-      ctx.closePath();
-      ctx.strokeStyle=hexA(cols[2], 0.12+energy*0.14);
+    // scanning sweep — listening
+    if(state==="listening"){
+      ctx.save(); ctx.translate(cx,cy);
+      const sa=t*2.4;
+      const maxR=base*RINGS[3].rf*DPR;
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.arc(0,0,maxR,sa-Math.PI*0.30,sa); ctx.closePath();
+      ctx.fillStyle=hexA(CYAN,0.04+react*0.07); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.lineTo(Math.cos(sa)*maxR,Math.sin(sa)*maxR);
+      ctx.strokeStyle=hexA(CYANBR,0.45+react*0.38);
       ctx.lineWidth=DPR*1.2; ctx.stroke();
+      ctx.restore();
+    }
+
+    // thinking dashed processing ring
+    if(state==="thinking"){
+      ctx.save(); ctx.translate(cx,cy);
+      ctx.setLineDash([5*DPR,4*DPR]);
+      ctx.lineDashOffset=-t*55;
+      ctx.beginPath(); ctx.arc(0,0,base*0.74*DPR,0,Math.PI*2);
+      ctx.strokeStyle=hexA(CYAN,0.48+0.26*Math.sin(t*6));
+      ctx.lineWidth=DPR*1.4; ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // HUD rings
+    ctx.save(); ctx.translate(cx,cy);
+    for(let ri=0;ri<RINGS.length;ri++){
+      const rg=RINGS[ri];
+      ringOff[ri]+=rg.spd*rg.dir*sm*0.016;
+      const r=base*rg.rf*DPR;
+      const segA=(Math.PI*2)/rg.segs;
+      const arcA=segA-rg.gap;
+      const ra=rg.a*(0.45+energy*0.65);
+      for(let s=0;s<rg.segs;s++){
+        const start=ringOff[ri]+s*segA;
+        ctx.beginPath(); ctx.arc(0,0,r,start,start+arcA);
+        ctx.strokeStyle=hexA(CYAN,ra*(0.75+0.25*Math.sin(t*1.5+s*0.4+ri)));
+        ctx.lineWidth=rg.lw*DPR; ctx.stroke();
+      }
+      if(rg.ticks){
+        for(let s=0;s<rg.segs;s+=4){
+          const a=ringOff[ri]+s*segA;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a)*r,           Math.sin(a)*r);
+          ctx.lineTo(Math.cos(a)*(r+5.5*DPR), Math.sin(a)*(r+5.5*DPR));
+          ctx.strokeStyle=hexA(CYANBR,0.45+energy*0.28);
+          ctx.lineWidth=DPR; ctx.stroke();
+        }
+      }
     }
     ctx.restore();
 
-    // highlight
-    ctx.beginPath();
-    ctx.arc(cx-R*0.32, cy-R*0.36, R*0.28, 0, Math.PI*2);
-    ctx.fillStyle = hexA("#ffffff", 0.18); ctx.fill();
+    // thin rotating reticle markers
+    ctx.save(); ctx.translate(cx,cy);
+    const retR=base*RINGS[2].rf*DPR;
+    for(let k=0;k<2;k++){
+      const ra=t*(0.28+k*0.18)*(k%2?-1:1);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(ra)*retR*0.82,Math.sin(ra)*retR*0.82);
+      ctx.lineTo(Math.cos(ra)*retR*1.18,Math.sin(ra)*retR*1.18);
+      ctx.strokeStyle=hexA(WHITE,0.65+0.25*Math.sin(t*4+k));
+      ctx.lineWidth=DPR*0.9; ctx.stroke();
+      const ra2=ra+Math.PI/2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(ra2)*retR*0.90,Math.sin(ra2)*retR*0.90);
+      ctx.lineTo(Math.cos(ra2)*retR*1.10,Math.sin(ra2)*retR*1.10);
+      ctx.strokeStyle=hexA(CYAN,0.28);
+      ctx.lineWidth=DPR*0.6; ctx.stroke();
+    }
+    ctx.restore();
+
+    // arc-reactor core
+    ctx.save(); ctx.translate(cx,cy);
+    const cR=base*0.30*DPR;
+    const pulse=breathe*0.12+react*0.40;
+
+    const outerGlow=ctx.createRadialGradient(0,0,cR*0.5,0,0,cR*3.0);
+    outerGlow.addColorStop(0,hexA(CYAN,0.52+pulse*0.42));
+    outerGlow.addColorStop(0.42,hexA(CYAN,0.10+pulse*0.10));
+    outerGlow.addColorStop(1,hexA(CYAN,0));
+    ctx.beginPath(); ctx.arc(0,0,cR*3.0,0,Math.PI*2);
+    ctx.fillStyle=outerGlow; ctx.fill();
+
+    // concentric arc-reactor rings
+    [0.95,0.72,0.50,0.28].forEach((rf,i)=>{
+      ctx.beginPath(); ctx.arc(0,0,cR*rf,0,Math.PI*2);
+      ctx.strokeStyle=hexA(i===0?CYAN:CYANBR,0.22+i*0.12+pulse*0.18);
+      ctx.lineWidth=DPR*(i===0?1.4:0.75); ctx.stroke();
+    });
+
+    // filled core gradient
+    const fill=ctx.createRadialGradient(-cR*0.14,-cR*0.16,0,0,0,cR*0.90);
+    fill.addColorStop(0,hexA(WHITE,0.93+pulse*0.07));
+    fill.addColorStop(0.35,hexA(CYANBR,0.88));
+    fill.addColorStop(0.75,hexA(CYAN,0.80+pulse*0.12));
+    fill.addColorStop(1,hexA('#004d60',0.70));
+    ctx.beginPath(); ctx.arc(0,0,cR*0.88,0,Math.PI*2);
+    ctx.fillStyle=fill; ctx.fill();
+
+    // white-hot centre bloom
+    const hot=ctx.createRadialGradient(0,0,0,0,0,cR*0.36);
+    hot.addColorStop(0,hexA(WHITE,0.98));
+    hot.addColorStop(1,hexA(CYANBR,0));
+    ctx.beginPath(); ctx.arc(0,0,cR*0.36,0,Math.PI*2);
+    ctx.fillStyle=hot; ctx.fill();
+    ctx.restore();
+
+    // flickering HUD numerals around ring 3
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.font=`${Math.round(8.5*DPR)}px ui-monospace,Menlo,monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    const numR=base*RINGS[2].rf*DPR*1.12;
+    for(let i=0;i<10;i++){
+      const na=ringOff[2]+(i/10)*Math.PI*2;
+      const flk=Math.sin(i*5.7+t*2.3+i*0.9);
+      if(flk>-0.55){
+        const label=HUD_NUMS[(i+Math.floor(t*0.4+i*1.6))%HUD_NUMS.length];
+        ctx.fillStyle=hexA(CYAN,0.18+Math.max(0,flk)*0.26);
+        ctx.fillText(label,Math.cos(na)*numR,Math.sin(na)*numR);
+      }
+    }
+    ctx.restore();
+
+    // corner HUD brackets
+    const m=32*DPR, L=24*DPR;
+    ctx.strokeStyle=hexA(CYAN,0.30+energy*0.20);
+    ctx.lineWidth=DPR*1.4;
+    [[m,m,1,1],[W-m,m,-1,1],[W-m,H-m,-1,-1],[m,H-m,1,-1]].forEach(([bx,by,dx,dy])=>{
+      ctx.beginPath(); ctx.moveTo(bx+dx*L,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+dy*L); ctx.stroke();
+    });
 
     requestAnimationFrame(frame);
   }
-  function hexA(hex,a){
-    const c = hex.replace("#","");
-    const n = parseInt(c.length===3? c.split("").map(x=>x+x).join(""):c,16);
-    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
-  }
   requestAnimationFrame(frame);
 
-  // ================= MIC LEVEL (listening reactivity) =================
+  // ================= MIC LEVEL + VAD =================
   let audioCtx, analyser, micData, micStream;
   async function ensureMicMeter(){
     if(analyser) return;
@@ -227,8 +354,57 @@
     let sum=0; for(let i=0;i<micData.length;i++){const v=(micData[i]-128)/128; sum+=v*v;}
     const rms = Math.sqrt(sum/micData.length);
     if(state==="listening") targetLevel = Math.min(1, rms*4);
+    // VAD barge-in: in hands-free mode, voice above threshold interrupts playback
+    if(state==="speaking" && handsFree && rms > 0.07){
+      interruptAndListen();
+    }
     requestAnimationFrame(meterLoop);
   }
+
+  // ================= AMBIENT HUM =================
+  let humCtx = null, humMaster = null;
+
+  function ensureHum(){
+    if(humCtx) return;
+    try{
+      humCtx = new (window.AudioContext||window.webkitAudioContext)();
+      humMaster = humCtx.createGain();
+      humMaster.gain.value = 0;
+      humMaster.connect(humCtx.destination);
+
+      const lfoGain = humCtx.createGain();
+      lfoGain.gain.value = 1.0;
+      lfoGain.connect(humMaster);
+      const lfo = humCtx.createOscillator();
+      lfo.frequency.value = 0.07;
+      const lfoAmt = humCtx.createGain();
+      lfoAmt.gain.value = 0.15;
+      lfo.connect(lfoAmt);
+      lfoAmt.connect(lfoGain.gain);
+      lfo.start();
+
+      const osc1 = humCtx.createOscillator();
+      osc1.type = "sine"; osc1.frequency.value = 70;
+      const g1 = humCtx.createGain(); g1.gain.value = 0.042;
+      osc1.connect(g1); g1.connect(lfoGain); osc1.start();
+
+      const osc2 = humCtx.createOscillator();
+      osc2.type = "sine"; osc2.frequency.value = 140;
+      const g2 = humCtx.createGain(); g2.gain.value = 0.013;
+      osc2.connect(g2); g2.connect(lfoGain); osc2.start();
+
+    }catch(e){ log("hum init error", e.message); humCtx = null; }
+  }
+
+  function setHumTarget(active){
+    if(!humCtx || !humMaster) return;
+    if(humCtx.state === "suspended") humCtx.resume();
+    const now = humCtx.currentTime;
+    humMaster.gain.cancelScheduledValues(now);
+    humMaster.gain.setTargetAtTime(active ? 1.0 : 0, now, active ? 1.2 : 2.5);
+  }
+
+  function updateHum(){ setHumTarget(state === "speaking"); }
 
   // ================= SPEECH RECOGNITION (STT) =================
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -249,7 +425,7 @@
     recog.onerror = e=>{ log("stt error", e.error); if(state==="listening") setState("idle"); };
     recog.onend = ()=>{
       targetLevel=0;
-      if(state==="listening") setState(handsFree? "idle":"idle");
+      if(state==="listening") setState("idle");
       if(handsFree && wantListen && state!=="speaking" && state!=="thinking") startListening();
     };
   }
@@ -260,35 +436,177 @@
   }
   function stopListening(){ wantListen=false; try{recog&&recog.stop();}catch{} targetLevel=0; }
 
+  // Interrupt TTS and start listening (barge-in / click-while-speaking)
+  function interruptAndListen(){
+    flushTts();
+    startListening();
+  }
+
+  // ================= TTS TEXT CLEANING =================
+
+  function cleanForTts(text){
+    // Remove fenced code blocks entirely
+    text = text.replace(/```[\s\S]*?```/g, " ");
+    // Remove inline code
+    text = text.replace(/`[^`\n]+`/g, " ");
+    // Remove URLs
+    text = text.replace(/https?:\/\/\S+/g, " ");
+    // Remove markdown link syntax, keep label
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+    // Remove image syntax
+    text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, " ");
+    // Remove markdown headers
+    text = text.replace(/^#{1,6}\s+/gm, "");
+    // Remove bold/italic
+    text = text.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1");
+    text = text.replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
+    // Remove blockquote markers
+    text = text.replace(/^>\s*/gm, "");
+    // Remove bullet/numbered list markers
+    text = text.replace(/^\s*[-*+]\s+/gm, "");
+    text = text.replace(/^\s*\d+\.\s+/gm, "");
+    // Remove horizontal rules
+    text = text.replace(/^[-_*]{3,}\s*$/gm, "");
+    // Collapse extra whitespace
+    return text.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // Returns true if the raw reply should be summarised rather than read in full
+  function shouldSummarise(rawText){
+    if(/```[\s\S]*?```/.test(rawText)) return true;
+    if(/`[^`\n]+`/.test(rawText)) return true;
+    const paras = rawText.split(/\n\n+/).filter(p => p.trim().length > 0);
+    if(paras.length >= 2) return true;
+    if(rawText.length > 350) return true;
+    return false;
+  }
+
   // ================= SPEECH SYNTHESIS (TTS) =================
   const synth = window.speechSynthesis;
   let voices=[], chosenVoice=null;
+
   function loadVoices(){
     voices = synth.getVoices();
-    // prefer a natural English voice
-    chosenVoice = voices.find(v=>/en(-|_)?(GB|US)/i.test(v.lang) && /natural|google|siri|aria|jenny|daniel|samantha/i.test(v.name))
-               || voices.find(v=>/^en/i.test(v.lang)) || voices[0] || null;
-    $("#voiceBtn").textContent = "Voice: " + (chosenVoice? chosenVoice.name.slice(0,16):"default");
+    chosenVoice =
+      voices.find(v => /google uk english female/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /kate|serena|moira|tessa|female/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && /google/i.test(v.name) && !/male/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang) && !/male/i.test(v.name))
+      || voices.find(v => /en(-|_)?GB/i.test(v.lang))
+      || voices.find(v => /en(-|_)?US/i.test(v.lang) && /samantha|victoria|karen|veena|zira|female/i.test(v.name))
+      || voices.find(v => /^en/i.test(v.lang) && /natural|google/i.test(v.name) && !/male/i.test(v.name))
+      || voices.find(v => /^en/i.test(v.lang))
+      || voices[0] || null;
+    $("#voiceBtn").textContent = "Voice: " + (chosenVoice ? chosenVoice.name.slice(0,16) : "default");
   }
   if(synth){ loadVoices(); synth.onvoiceschanged = loadVoices; }
-  function speak(text){
-    if(!synth || !text) { setState("idle"); return; }
+
+  // ---------- Butler acknowledgements ----------
+  const BUTLER_ACKS = [
+    "One moment, sir.",
+    "Allow me to check.",
+    "Looking into it now.",
+    "Right away, sir.",
+    "Consider it done.",
+    "On it, sir.",
+    "Leave it with me.",
+  ];
+
+  const TOOL_LINES = {
+    web_search:   "Searching the web, sir.",
+    web_fetch:    "Fetching that page, sir.",
+    file_fetch:   "Consulting the files, sir.",
+    file_read:    "Consulting the files, sir.",
+    dir_list:     "Perusing the directory, sir.",
+    dir_fetch:    "Perusing the directory, sir.",
+    exec:         "Running the command, sir.",
+    bash:         "Running the command, sir.",
+    browser:      "Opening the browser, sir.",
+    code_review:  "Reviewing the code, sir.",
+  };
+
+  function randomAck(){ return BUTLER_ACKS[Math.floor(Math.random()*BUTLER_ACKS.length)]; }
+  function toolLine(name){
+    const key = (name||"").toLowerCase().replace(/[^a-z_]/g,"_");
+    return TOOL_LINES[key] || "Working on it, sir.";
+  }
+
+  // ---------- Deferred acknowledgement (skip if reply starts within 1 s) ----------
+  let ackTimer = null;
+  let ackPending = false;
+
+  function schedulePendingAck(text){
+    cancelPendingAck();
+    ackPending = true;
+    ackTimer = setTimeout(()=>{
+      if(ackPending){ enqueueSpeech(text, true); ackPending = false; }
+    }, 1000);
+  }
+
+  function cancelPendingAck(){
+    if(ackTimer){ clearTimeout(ackTimer); ackTimer = null; }
+    ackPending = false;
+  }
+
+  // ---------- TTS queue (sentence-by-sentence streaming) ----------
+  let ttsQueue = [];
+  let ttsPlaying = false;
+  let sentenceBuffer = "";
+  let streamCaption = "";
+  let fullRawText = "";      // accumulates raw markdown for shouldSummarise check
+  let summarySpoken = false; // prevent repeating "details on screen"
+
+  function extractSentences(text){
+    const sentences = [];
+    const re = /[^.!?]*[.!?][)"']?(?=\s|$)/g;
+    let last = 0, m;
+    while((m = re.exec(text)) !== null){
+      const s = m[0].trim();
+      if(s) sentences.push(s);
+      last = re.lastIndex;
+    }
+    return { sentences, remainder: text.slice(last) };
+  }
+
+  function flushTts(){
     synth.cancel();
+    ttsQueue = [];
+    ttsPlaying = false;
+    targetLevel = 0;
+  }
+
+  function enqueueSpeech(text, isAck){
+    if(!synth || !text.trim()) return;
+    if(isAck){
+      flushTts();
+      ttsQueue = [text.trim()];
+    } else {
+      ttsQueue.push(text.trim());
+    }
+    if(!ttsPlaying) playNextTts();
+  }
+
+  function playNextTts(){
+    if(!ttsQueue.length){
+      ttsPlaying = false; targetLevel = 0;
+      if(handsFree){ setState("idle"); startListening(); } else setState("idle");
+      return;
+    }
+    ttsPlaying = true;
+    const text = ttsQueue.shift();
     const u = new SpeechSynthesisUtterance(text);
     if(chosenVoice) u.voice = chosenVoice;
-    u.rate=1.02; u.pitch=1.0;
-    setState("speaking"); caption.textContent = text;
-    // fake amplitude pulse while speaking (SpeechSynthesis gives no analyser)
-    let pulse=0; const pulseTimer=setInterval(()=>{ pulse+=0.4; targetLevel=0.35+0.35*Math.abs(Math.sin(pulse)); },60);
-    u.onend = ()=>{ clearInterval(pulseTimer); targetLevel=0;
-      if(handsFree){ setState("idle"); startListening(); } else setState("idle"); };
-    u.onerror = ()=>{ clearInterval(pulseTimer); targetLevel=0; setState("idle"); };
+    u.rate = 0.92; u.pitch = 0.70;
+    setState("speaking");
+    caption.textContent = text;
+    let pulse = 0;
+    const pulseTimer = setInterval(()=>{ pulse += 0.4; targetLevel = 0.35 + 0.35*Math.abs(Math.sin(pulse)); }, 60);
+    u.onend  = ()=>{ clearInterval(pulseTimer); playNextTts(); };
+    u.onerror= ()=>{ clearInterval(pulseTimer); playNextTts(); };
     synth.speak(u);
   }
 
   // ================= DEVICE IDENTITY (Ed25519 via Web Crypto) =================
-  // Browser generates a persistent Ed25519 key pair used to sign the gateway
-  // connect.challenge nonce, satisfying the protocol v4 device identity requirement.
   let _devicePrivKey = null, _deviceId = null, _devicePubB64 = null;
 
   function b64url(buf){
@@ -321,7 +639,6 @@
   async function buildDeviceParams(nonce, token){
     const signedAt = Date.now();
     const scopes   = "operator.read,operator.write";
-    // v3 payload: "v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily"
     const payload  = ["v3",_deviceId,"webchat-ui","ui","operator",
                        scopes,String(signedAt),token||"",nonce,"web",""].join("|");
     const sigBuf   = await crypto.subtle.sign("Ed25519", _devicePrivKey,
@@ -330,7 +647,7 @@
   }
 
   // ================= GATEWAY WEBSOCKET =================
-  let ws=null, rpcId=1, ready=false, assemble="", connectReqId=null;
+  let ws=null, rpcId=1, ready=false, connectReqId=null;
 
   async function connect(){
     const url   = $("#wsurl").value.trim();
@@ -352,7 +669,6 @@
 
   function fail(){ setState("error"); connDot.className="dot err"; $("#panel").classList.add("open"); }
 
-  // All outbound RPC frames: {type:"req", id:<string>, method, params}
   function send(obj){
     if(!ws||ws.readyState!==1) return;
     const id = String(rpcId++);
@@ -386,7 +702,6 @@
   async function handle(m){
     log("←", JSON.stringify(m).slice(0,220));
 
-    // ── Phase 1: gateway sends challenge before accepting connect ──
     if(m.type==="event" && m.event==="connect.challenge"){
       const nonce = m.payload?.nonce;
       if(!nonce){ log("challenge: missing nonce"); return fail(); }
@@ -394,7 +709,6 @@
       return;
     }
 
-    // ── Phase 2: connect response (hello-ok or error) ──
     if(m.type==="res" && m.id===connectReqId){
       connectReqId = null;
       if(m.ok && m.payload?.type==="hello-ok"){
@@ -411,23 +725,65 @@
       return;
     }
 
-    if(!ready) return;   // ignore everything else until connected
+    if(!ready) return;
 
-    // ── Phase 3: chat stream (protocol v4) ──
-    // Events: {type:"event", event:"chat", payload:{state:"delta"|"final"|"aborted"|"error", …}}
+    // Tool-call events
+    if(m.type==="event" && (m.event==="tool.start" || m.event==="tool.use" || m.event==="tool.call")){
+      const name = m.payload?.name || m.payload?.tool || "";
+      enqueueSpeech(toolLine(name));
+      return;
+    }
+
+    // Chat stream (protocol v4)
     if(m.type==="event" && m.event==="chat"){
       const p = m.payload; if(!p) return;
+
       if(p.state==="delta"){
-        if(p.replace){ assemble = p.deltaText||""; }
-        else          { assemble += p.deltaText||""; }
-        caption.textContent = assemble;
-        setState("thinking");
+        // Cancel ack if first text chunk arrives quickly (reply was fast)
+        cancelPendingAck();
+
+        const chunk = p.deltaText || "";
+        if(p.replace){ sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false; }
+        sentenceBuffer += chunk;
+        streamCaption  += chunk;
+        fullRawText    += chunk;
+        caption.textContent = streamCaption;
+        if(state!=="speaking") setState("thinking");
+
+        // If we've crossed the summarise threshold mid-stream, flush and note it
+        if(!summarySpoken && shouldSummarise(fullRawText)){
+          flushTts();
+          // defer speaking the summary until final, to avoid premature cut-off
+        } else if(!summarySpoken) {
+          // Speak complete sentences as they arrive (cleaned of markdown)
+          const cleaned = cleanForTts(sentenceBuffer);
+          const { sentences, remainder } = extractSentences(cleaned);
+          if(sentences.length){
+            sentences.forEach(s => enqueueSpeech(s));
+            // advance raw buffer by roughly the same length (best-effort)
+            sentenceBuffer = sentenceBuffer.slice(Math.max(0, sentenceBuffer.length - remainder.length));
+          }
+        }
+
       } else if(p.state==="final"){
-        const reply = assemble.trim();
-        assemble = "";
-        if(reply){ speak(reply); } else setState("idle");
+        if(shouldSummarise(fullRawText)){
+          // Flush any partial TTS and speak a brief summary instead
+          flushTts();
+          if(!summarySpoken){
+            summarySpoken = true;
+            enqueueSpeech("The details are on screen, sir.");
+          }
+        } else {
+          // Flush any incomplete sentence remaining in the buffer
+          const remaining = cleanForTts(sentenceBuffer).trim();
+          if(remaining) enqueueSpeech(remaining);
+        }
+        sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
+
       } else if(p.state==="aborted" || p.state==="error"){
-        assemble = "";
+        flushTts();
+        cancelPendingAck();
+        sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
         if(p.errorMessage) caption.textContent = p.errorMessage;
         setState("idle");
       }
@@ -436,7 +792,10 @@
 
   function sendToJarvis(text){
     if(!ready){ log("not connected — open ⚙ and Connect"); caption.textContent="(not connected — open ⚙)"; return; }
-    setState("thinking"); assemble="";
+    setState("thinking");
+    sentenceBuffer = ""; streamCaption = ""; fullRawText = ""; summarySpoken = false;
+    // Schedule ack; it fires in 1 s unless a delta cancels it first
+    schedulePendingAck(randomAck());
     send({method:"chat.send", params:{
       sessionKey: $("#session").value.trim()||"agent:main:main",
       message: text,
@@ -446,25 +805,38 @@
 
   // ================= UI WIRING =================
   $("#stage").addEventListener("click", async ()=>{
+    ensureHum();
     if($("#panel").classList.contains("open")) return;
     hint.style.opacity="0";
     if(state==="listening"){ stopListening(); setState("idle"); return; }
-    if(state==="speaking"){ synth.cancel(); setState("idle"); return; }
+    if(state==="speaking"){ interruptAndListen(); return; }
     await startListening();
   });
   addEventListener("keydown", e=>{
-    if(e.code==="Space"){ e.preventDefault(); $("#stage").click(); }
-    if(e.code==="Escape"){ stopListening(); synth&&synth.cancel(); setState("idle"); }
+    if(e.code==="Space"){
+      ensureHum(); e.preventDefault();
+      if(state==="speaking"){ interruptAndListen(); return; }
+      $("#stage").click();
+    }
+    if(e.code==="Escape"){ stopListening(); flushTts(); cancelPendingAck(); setState("idle"); }
+  });
+  muteBtn.addEventListener("click", e=>{
+    e.stopPropagation();
+    stopListening(); flushTts(); cancelPendingAck(); setState("idle");
   });
   $("#gear").onclick = ()=> $("#panel").classList.toggle("open");
   $("#connectBtn").onclick = ()=> connect().catch(e=>{ log("connect error:",e.message); fail(); });
   $("#toggleLog").onclick = e=>{ logEl.classList.toggle("show"); e.target.textContent = logEl.classList.contains("show")?"Hide log":"Show log"; };
-  $("#voiceBtn").onclick = ()=>{ if(!voices.length) return; const i=voices.indexOf(chosenVoice); chosenVoice=voices[(i+1)%voices.length]; $("#voiceBtn").textContent="Voice: "+chosenVoice.name.slice(0,16); };
+  $("#voiceBtn").onclick = ()=>{
+    if(!voices.length) return;
+    const i = voices.indexOf(chosenVoice);
+    chosenVoice = voices[(i+1)%voices.length];
+    $("#voiceBtn").textContent = "Voice: "+chosenVoice.name.slice(0,16);
+  };
   $("#hands").onclick = ()=>{ handsFree=!handsFree; $("#hands").textContent="Hands-free: "+(handsFree?"on":"off"); if(handsFree) startListening(); else stopListening(); };
   $("#clearSaved").onclick = e=>{ e.preventDefault(); localStorage.removeItem("jarvisOrb"); $("#token").value="";
     _devicePrivKey=null; _deviceId=null; _devicePubB64=null; log("cleared saved token + device identity"); };
 
-  // auto-connect if we have a token saved
   if(saved.token){ connect().catch(e=>{ log("auto-connect error:",e.message); fail(); }); }
   paintStatus();
   log("Jarvis Orb ready. Open ⚙ to connect, then click the orb to talk.");
